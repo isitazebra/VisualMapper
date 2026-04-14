@@ -1,5 +1,13 @@
 import type { RuleTypeId, RuleTypeMeta } from "./types";
 
+/**
+ * Centralized font stacks. Fonts are loaded via <link> in app/layout.tsx
+ * — if we switch to next/font/google later, update these two constants
+ * to reference the injected CSS variables.
+ */
+export const FONT_SANS = "'Karla', ui-sans-serif, system-ui, sans-serif";
+export const FONT_MONO = "'Fira Code', ui-monospace, monospace";
+
 /** Palette used across the mapping UI (kept in sync with tailwind.config). */
 export const COLORS = {
   bg: "#f3f1ec",

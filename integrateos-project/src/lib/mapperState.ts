@@ -1,4 +1,5 @@
 import type { FieldMap, MapperAction, MapperState, SchemaNode } from "./types";
+import type { HydratedMappingSpec } from "./mappingSpec";
 import { getSourceSchema, getTargetSchema } from "./schemas";
 
 export const initialMapperState: MapperState = {
@@ -13,6 +14,17 @@ export const initialMapperState: MapperState = {
   fmt: "xml",
   view: "mapping",
 };
+
+/** Build reducer state from a hydrated server-side spec. */
+export function stateFromSpec(spec: HydratedMappingSpec): MapperState {
+  return {
+    ...initialMapperState,
+    tx: spec.txType,
+    ver: spec.ediVersion,
+    fmt: spec.targetFormat,
+    maps: spec.maps,
+  };
+}
 
 /** Split a label into fuzzy-match tokens (words ≥ 3 chars). */
 function tokenize(label: string): string[] {

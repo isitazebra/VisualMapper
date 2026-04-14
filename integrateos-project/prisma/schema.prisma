@@ -2,12 +2,18 @@
 // See CLAUDE.md for domain context
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // "native" for local dev, "rhel-openssl-3.0.x" for Vercel's Node 20 runtime.
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  // Pooled connection for serverless runtime queries.
+  url       = env("DATABASE_URL")
+  // Direct connection used by `prisma migrate` (Neon integration sets
+  // both when you install it from Vercel).
+  directUrl = env("DATABASE_URL_UNPOOLED")
 }
 
 // ─── Partners (trading partners being onboarded) ───

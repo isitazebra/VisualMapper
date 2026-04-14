@@ -1,16 +1,33 @@
 "use client";
 
-import { useMemo, useReducer } from "react";
-import { COLORS } from "@/lib/rules";
-import { initialMapperState, mapperReducer } from "@/lib/mapperState";
+import { useMemo, useReducer, useRef, useState } from "react";
+import { COLORS, FONT_SANS } from "@/lib/rules";
+import { initialMapperState, mapperReducer, stateFromSpec } from "@/lib/mapperState";
 import { getSourceSchema, getTargetSchema, TX_LABELS, FMT_LABELS } from "@/lib/schemas";
+import type { HydratedMappingSpec } from "@/lib/mappingSpec";
+import { useDebouncedEffect } from "@/lib/useDebouncedEffect";
 import { MapperToolbar } from "./MapperToolbar";
 import { TreePanel } from "./TreePanel";
 import { RulePanel } from "./RulePanel";
 
+interface MappingStudioProps {
+  /** If present, the studio loads this spec and autosaves changes. */
+  initialSpec?: HydratedMappingSpec;
+}
+
+type SaveStatus = "idle" | "saving" | "saved" | "error";
+
 /** Top-level mapping studio — orchestrates state and the three panels. */
-export function MappingStudio() {
-  const [state, dispatch] = useReducer(mapperReducer, initialMapperState);
+export function MappingStudio({ initialSpec }: MappingStudioProps) {
+  const [state, dispatch] = useReducer(
+    mapperReducer,
+    initialSpec ? stateFromSpec(initialSpec) : initialMapperState,
+  );
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+  const [saveError, setSaveError] = useState<string | null>(null);
+  // Skip the very first autosave tick — it fires immediately after mount
+  // because `state` is a fresh reference, but nothing actually changed.
+  const hasMounted = useRef(false);
 
   const sourceSchema = useMemo(() => getSourceSchema(state.tx), [state.tx]);
   const targetSchema = useMemo(() => getTargetSchema(state.tx, state.fmt), [state.tx, state.fmt]);
@@ -22,6 +39,23 @@ export function MappingStudio() {
     overrides: state.maps.filter((m) => m.co).length,
   };
 
+  // Debounced autosave — only active when we have a persisted spec.
+  useDebouncedEffect(
+    () => {
+      if (!initialSpec) return;
+      if (!hasMounted.current) {
+        hasMounted.current = true;
+        return;
+      }
+      void saveSpec(initialSpec.id, state.maps, state.tx, state.ver, state.fmt, {
+        setStatus: setSaveStatus,
+        setError: setSaveError,
+      });
+    },
+    [state.maps, state.tx, state.ver, state.fmt],
+    500,
+  );
+
   const targetBadge = state.fmt === "json" ? "{}" : state.fmt === "csv" ? "CSV" : "XML";
 
   return (
@@ -31,13 +65,21 @@ export function MappingStudio() {
         flexDirection: "column",
         height: "100vh",
         background: COLORS.bg,
-        fontFamily: "Karla, sans-serif",
+        fontFamily: FONT_SANS,
         color: COLORS.tx,
       }}
     >
-      <MapperToolbar state={state} dispatch={dispatch} stats={stats} />
+      <MapperToolbar
+        state={state}
+        dispatch={dispatch}
+        stats={stats}
+        persisted={!!initialSpec}
+        saveStatus={saveStatus}
+        saveError={saveError}
+        specName={initialSpec?.name}
+        partnerId={initialSpec?.partnerId}
+      />
 
-      {/* Two tree panels side by side */}
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         <TreePanel
           side="s"
@@ -67,7 +109,6 @@ export function MappingStudio() {
         />
       </div>
 
-      {/* Bottom rule detail */}
       <div
         style={{
           height: 180,
@@ -99,4 +140,31 @@ export function MappingStudio() {
       </div>
     </div>
   );
+}
+
+async function saveSpec(
+  id: string,
+  maps: unknown,
+  txType: string,
+  ediVersion: string,
+  targetFormat: string,
+  ctx: {
+    setStatus: (s: SaveStatus) => void;
+    setError: (msg: string | null) => void;
+  },
+) {
+  ctx.setStatus("saving");
+  ctx.setError(null);
+  try {
+    const res = await fetch(`/api/mappings/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ maps, txType, ediVersion, targetFormat }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    ctx.setStatus("saved");
+  } catch (err) {
+    ctx.setStatus("error");
+    ctx.setError(err instanceof Error ? err.message : String(err));
+  }
 }
