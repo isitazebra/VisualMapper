@@ -3,6 +3,7 @@
 import { type Dispatch } from "react";
 import type { MapperAction, MapperState, RuleTypeId, SchemaNode } from "@/lib/types";
 import { RULE_TYPES, COLORS, FONT_MONO, FONT_SANS, ruleNeedsValue } from "@/lib/rules";
+import { explainMapping } from "@/lib/explain";
 import { OverrideStack } from "./OverrideStack";
 
 interface RulePanelProps {
@@ -50,9 +51,32 @@ export function RulePanel({ state, dispatch, sourceSchema, targetSchema }: RuleP
         <div style={{ fontSize: 10, fontWeight: 700, marginBottom: 3 }}>
           {sourceNode?.seg} <span style={{ color: COLORS.blue }}>→</span> {targetNode?.seg}
         </div>
-        <div style={{ fontSize: 8, color: COLORS.t3, marginBottom: 6 }}>
+        <div style={{ fontSize: 8, color: COLORS.t3, marginBottom: 4 }}>
           {sourceNode?.label} → {targetNode?.label}
         </div>
+        {baseMap && (
+          <div
+            style={{
+              fontSize: 9,
+              fontStyle: "italic",
+              color: COLORS.t2,
+              background: "#fffdf6",
+              border: `1px solid ${COLORS.border}`,
+              borderRadius: 3,
+              padding: "4px 6px",
+              marginBottom: 6,
+              lineHeight: 1.4,
+            }}
+          >
+            💬{" "}
+            {explainMapping({
+              base: baseMap,
+              overrides,
+              sourceNode,
+              targetNode,
+            })}
+          </div>
+        )}
 
         <div
           style={{

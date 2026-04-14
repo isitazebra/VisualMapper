@@ -87,9 +87,9 @@ Postgres + a pooled/unpooled URL pair.
 |---|---|---|---|
 | `DATABASE_URL` | Step 1 | Neon integration | Pooled (transaction mode), serverless-friendly |
 | `DATABASE_URL_UNPOOLED` | Step 1 | Neon integration | Direct — used by `prisma migrate` |
-| `NEXTAUTH_URL` | Step 2 | Vercel (auto) | Partner portal auth |
-| `NEXTAUTH_SECRET` | Step 2 | You | `openssl rand -base64 32` |
-| `ANTHROPIC_API_KEY` | Step 3 | You | Plain-English rule authoring |
+| `ANTHROPIC_API_KEY` | Phase 3.2 | You | Plain-English rule authoring / AI auto-map. Without it the compose bar returns a 503; the rest of the app works. Get one at https://console.anthropic.com/settings/keys |
+| `NEXTAUTH_URL` | Phase 1.2 (deferred) | Vercel (auto) | Partner portal auth |
+| `NEXTAUTH_SECRET` | Phase 1.2 (deferred) | You | `openssl rand -base64 32` |
 
 ## Verifying a build locally
 
