@@ -74,6 +74,10 @@ model MappingSpec {
   targetSchemaId String?
   direction    String  @default("inbound") // inbound | outbound
   status       String  @default("draft") // draft | review | confirmed | live
+  // Optional saved sample payload used by the studio's live preview.
+  // Persisted so it survives page refreshes. Shape is free-form — the
+  // format is determined by the source schema.
+  samplePayload String? @db.Text
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

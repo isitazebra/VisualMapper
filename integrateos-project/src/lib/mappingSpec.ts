@@ -36,6 +36,8 @@ export interface HydratedMappingSpec {
   sourceSchemaId: string;
   targetSchemaId: string;
   status: string;
+  /** Saved source payload for the live preview. */
+  samplePayload: string;
   maps: FieldMap[];
 }
 
@@ -101,6 +103,7 @@ export function flattenDbSpec(spec: DbSpecWithChildren): HydratedMappingSpec {
     sourceSchemaId: spec.sourceSchemaId ?? builtinSourceSchemaId(tx),
     targetSchemaId: spec.targetSchemaId ?? builtinTargetSchemaId(tx, fmt),
     status: spec.status,
+    samplePayload: spec.samplePayload ?? "",
     maps,
   };
 }
