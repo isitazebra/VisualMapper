@@ -1,0 +1,141 @@
+// IntegrateOS — B2B mapping platform
+// See CLAUDE.md for domain context
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Partners (trading partners being onboarded) ───
+model Partner {
+  id          String   @id @default(cuid())
+  name        String
+  scac        String?  // Standard Carrier Alpha Code
+  type        String   // "carrier" | "shipper" | "3pl" | "customer"
+  status      String   @default("onboarding") // onboarding | active | paused
+  contactName String?
+  contactEmail String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  mappings MappingSpec[]
+}
+
+// ─── A mapping spec (one transaction type × direction for a partner) ───
+model MappingSpec {
+  id           String  @id @default(cuid())
+  partnerId    String
+  partner      Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  name         String
+  txType       String  // "204" | "214" | "210" | "990" | "850" | "855" | "856" | "810"
+  ediVersion   String  // "3040" | "4010" | "4030" | "5010"
+  sourceFormat String  // "x12" (typically)
+  targetFormat String  // "xml" | "json" | "otm_xml" | "csv"
+  direction    String  @default("inbound") // inbound | outbound
+  status       String  @default("draft") // draft | review | confirmed | live
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  fieldMappings FieldMapping[]
+  loopConfigs   LoopConfig[]
+  comments      Comment[]
+  changeLog     ChangeLogEntry[]
+
+  @@index([partnerId])
+  @@index([txType, ediVersion])
+}
+
+// ─── Individual source-to-target field mapping (the base rule) ───
+model FieldMapping {
+  id            String      @id @default(cuid())
+  mappingSpecId String
+  mappingSpec   MappingSpec @relation(fields: [mappingSpecId], references: [id], onDelete: Cascade)
+  sourceFieldId String      // schema node id, e.g. "b204" (B2*04)
+  targetFieldId String      // target schema node id, e.g. "tx06" (shipmentIdentificationNumber)
+  ruleType      String      // direct | hardcode | conditional | suppress | currentDate | currentTime
+                            // | autoIncrement | concat | lookup | formula | parseXml
+                            // | dateFormat | passthrough | hlCounter | splitField
+  value         String?     // The hardcoded/formula/lookup value (type depends on ruleType)
+  condition     String?     // Optional predicate for conditional rules
+  notes         String?     // Free-form notes from the mapper
+  confirmed     Boolean     @default(false)
+  createdBy     String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  overrides CustomerOverride[]
+  comments  Comment[]
+
+  @@index([mappingSpecId])
+  @@index([sourceFieldId])
+  @@index([targetFieldId])
+}
+
+// ─── Customer-specific override stacked on top of a base FieldMapping ───
+model CustomerOverride {
+  id             String       @id @default(cuid())
+  fieldMappingId String
+  fieldMapping   FieldMapping @relation(fields: [fieldMappingId], references: [id], onDelete: Cascade)
+  customerName   String       // "UPS SCS", "Kroger", "Elanco", etc.
+  ruleType       String
+  value          String?
+  condition      String?      // "If ISA*06 = ELOGEX" etc.
+  active         Boolean      @default(true)
+  priority       Int          @default(0) // ordering when multiple overrides match
+  notes          String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([fieldMappingId])
+  @@index([customerName])
+}
+
+// ─── How a repeating loop (N1 parties, S5 stops, etc.) is handled ───
+model LoopConfig {
+  id            String      @id @default(cuid())
+  mappingSpecId String
+  mappingSpec   MappingSpec @relation(fields: [mappingSpecId], references: [id], onDelete: Cascade)
+  loopId        String      // schema node id for the loop, e.g. "s5" or "n1h"
+  operation     String      // copy_all | filter | first | aggregate
+  condition     String?     // e.g. "entityCode = SH"
+  limit         Int?        // optional max iterations
+  notes         String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@index([mappingSpecId])
+}
+
+// ─── Threaded collaboration comment (on spec or on a specific field mapping) ───
+model Comment {
+  id             String        @id @default(cuid())
+  mappingSpecId  String
+  mappingSpec    MappingSpec   @relation(fields: [mappingSpecId], references: [id], onDelete: Cascade)
+  fieldMappingId String?
+  fieldMapping   FieldMapping? @relation(fields: [fieldMappingId], references: [id], onDelete: Cascade)
+  author         String
+  text           String
+  resolved       Boolean       @default(false)
+  createdAt      DateTime      @default(now())
+
+  @@index([mappingSpecId])
+  @@index([fieldMappingId])
+}
+
+// ─── Audit trail for change log ───
+model ChangeLogEntry {
+  id            String      @id @default(cuid())
+  mappingSpecId String
+  mappingSpec   MappingSpec @relation(fields: [mappingSpecId], references: [id], onDelete: Cascade)
+  author        String
+  action        String      // "created" | "updated" | "confirmed" | "override_added" | ...
+  summary       String
+  payload       Json?       // optional before/after snapshot
+  createdAt     DateTime    @default(now())
+
+  @@index([mappingSpecId])
+}
