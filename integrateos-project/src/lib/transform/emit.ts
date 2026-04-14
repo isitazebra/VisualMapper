@@ -61,28 +61,41 @@ interface EmitCtx {
 function buildEmitCtx(params: EmitParams): EmitCtx {
   const targetById = new Map(params.targetDescriptor.nodes.map((n) => [n.id, n]));
   const sourceLeafToLoop = params.extract.leafToLoop;
+  // Pre-index source nodes by seg so resolveSource can accept either
+  // the id ("b204") or the seg ("B2*04") — handy for user-authored
+  // conditions and concat templates.
+  const sourceIdBySeg = new Map<string, string>();
+  for (const n of params.sourceDescriptor.nodes) {
+    if (!sourceIdBySeg.has(n.seg)) sourceIdBySeg.set(n.seg, n.id);
+  }
   const driverByTargetLoop = buildDriverMap(
     params.targetDescriptor.nodes,
     params.rulesByTargetId,
     sourceLeafToLoop,
   );
-  // resolveSource is filled in per-iteration below so concat-template
-  // rules see the correct value for the current loop scope. The ctx
-  // here holds a reference; we mutate its closure-captured iterCtx as
-  // the emitter walks.
   const iterCtxRef = { current: new Map<string, number>() };
+
+  function resolveById(sourceId: string): string | undefined {
+    const arr = params.extract.values.get(sourceId);
+    if (!arr) return undefined;
+    const loop = sourceLeafToLoop.get(sourceId);
+    if (loop && iterCtxRef.current.has(loop)) {
+      return arr[iterCtxRef.current.get(loop)!];
+    }
+    return arr[0];
+  }
+
   const applyCtx: ApplyContext = {
     counters: new Map(),
     lookupTables: params.lookupTables,
-    resolveSource: (sourceId: string) => {
-      const arr = params.extract.values.get(sourceId);
-      if (!arr) return undefined;
-      const loop = sourceLeafToLoop.get(sourceId);
-      if (loop && iterCtxRef.current.has(loop)) {
-        return arr[iterCtxRef.current.get(loop)!];
-      }
-      return arr[0];
+    resolveSource: (nameOrSeg: string) => {
+      const byId = resolveById(nameOrSeg);
+      if (byId !== undefined) return byId;
+      const mappedId = sourceIdBySeg.get(nameOrSeg);
+      if (mappedId) return resolveById(mappedId);
+      return undefined;
     },
+    allValuesForSource: (sourceId) => params.extract.values.get(sourceId),
   };
   return {
     targetDescriptor: params.targetDescriptor,

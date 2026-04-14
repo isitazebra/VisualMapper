@@ -17,18 +17,22 @@ import { XMLParser } from "fast-xml-parser";
 import type { FieldMap, RuleTypeId } from "../types";
 import { FORMULAS } from "./formulas";
 import { applyDateFormat } from "./dateFormat";
+import { parse as parseExpression, evaluate as evaluateExpression } from "./expression";
 
 export interface ApplyContext {
   /** Counter shared across the whole transform run — keyed by rule id
    * so repeated applications of the *same* rule increment consistently. */
   counters: Map<string, number>;
-  /** Resolver the emitter installs so rules (e.g. concat templates)
-   * can reference other source fields honoring the current iteration
-   * context. Returns undefined for unknown ids or missing values. */
-  resolveSource?: (sourceId: string) => string | undefined;
-  /** Lookup tables by name (LookupTable.name → entries map). Populated
-   * by the caller of runTransform. */
+  /** Resolver the emitter installs so rules (e.g. concat templates /
+   * conditional references) can look up other source fields honoring
+   * the current iteration context. Accepts either a source-node id or
+   * a seg (e.g. "ISA*06"). Returns undefined for unknown names. */
+  resolveSource?: (sourceIdOrSeg: string) => string | undefined;
+  /** Lookup tables by name (LookupTable.name → entries map). */
   lookupTables?: Map<string, Record<string, string>>;
+  /** Returns the full per-iteration value array for a source leaf —
+   * used by the `aggregate` rule type to sum/count across iterations. */
+  allValuesForSource?: (sourceId: string) => (string | undefined)[] | undefined;
 }
 
 const xmlParser = new XMLParser({
@@ -88,6 +92,9 @@ export function applyRule(
 
     case "lookup":
       return applyLookup(rule.v ?? "", sourceValue ?? "", ctx);
+
+    case "aggregate":
+      return applyAggregate(rule.sid, rule.v ?? "", ctx);
 
     default:
       return `⟨${rule.rt}?⟩${sourceValue ? ` ${sourceValue}` : ""}`;
@@ -201,19 +208,33 @@ function applyParseXml(path: string, value: string): string {
 }
 
 /**
- * Conservative conditional evaluation — Phase 2.5d will replace this
- * with a full expression parser. For now:
- *  - empty cond → treat like direct
- *  - "= <value>" form → compare sourceValue (case-insensitive) to value
- *  - anything else → fall back to sourceValue unchanged
+ * Conditional evaluation backed by the expression parser.
+ *  - Empty cond → pass sourceValue through (treated like direct).
+ *  - Parse the cond; if the AST is well-formed, evaluate with a
+ *    resolver that honors "_" (this rule's own source) and delegates
+ *    other names to ctx.resolveSource (which accepts id or seg).
+ *  - If the predicate holds → emit rule.v (or sourceValue if rule.v
+ *    is empty, so "conditional" can act as a gate).
+ *  - If the predicate is false → pass sourceValue through.
+ *  - If parsing fails → legacy fallback: `= VALUE` pattern against the
+ *    source value (preserves behavior of pre-2.5d rules).
  */
 function evaluateConditional(
   rule: FieldMap,
   sourceValue: string | undefined,
-  _ctx: ApplyContext,
+  ctx: ApplyContext,
 ): string {
   const cond = rule.cond?.trim();
   if (!cond) return sourceValue ?? "";
+  const expr = parseExpression(cond);
+  if (expr) {
+    const resolve = (name: string): string | undefined => {
+      if (name === "_") return sourceValue;
+      return ctx.resolveSource?.(name);
+    };
+    return evaluateExpression(expr, resolve) ? (rule.v ?? sourceValue ?? "") : (sourceValue ?? "");
+  }
+  // Legacy fallback.
   const match = cond.match(/=\s*(.+)$/);
   if (!match) return rule.v ?? "";
   const rhs = match[1].trim().replace(/^"|"$/g, "");
@@ -221,6 +242,41 @@ function evaluateConditional(
     return rule.v ?? "";
   }
   return sourceValue ?? "";
+}
+
+/** Aggregate across a source loop's iterations. rule.v is the op:
+ *  - sum / avg / min / max — numeric aggregations
+ *  - count — iteration count (ignores value)
+ *  - first / last — first / last non-empty value
+ */
+function applyAggregate(
+  sourceId: string,
+  op: string,
+  ctx: ApplyContext,
+): string {
+  const values = ctx.allValuesForSource?.(sourceId) ?? [];
+  const nonEmpty = values.filter((v): v is string => v !== undefined && v !== "");
+  const nums = nonEmpty.map(parseFloat).filter((n) => !Number.isNaN(n));
+  switch (op) {
+    case "count":
+      return String(values.length);
+    case "first":
+      return nonEmpty[0] ?? "";
+    case "last":
+      return nonEmpty[nonEmpty.length - 1] ?? "";
+    case "sum":
+      return nums.reduce((a, b) => a + b, 0).toString();
+    case "avg":
+      return nums.length > 0
+        ? (nums.reduce((a, b) => a + b, 0) / nums.length).toString()
+        : "0";
+    case "min":
+      return nums.length > 0 ? Math.min(...nums).toString() : "";
+    case "max":
+      return nums.length > 0 ? Math.max(...nums).toString() : "";
+    default:
+      return `⟨aggregate:${op || "?"}⟩`;
+  }
 }
 
 export type { RuleTypeId };

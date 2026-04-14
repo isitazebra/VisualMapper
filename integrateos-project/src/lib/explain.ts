@@ -85,6 +85,27 @@ export function explainRule(rule: FieldMap, src: string, tgt: string): string {
       return rule.v
         ? `Parse XML tag "${rule.v}" inside ${src} and write to ${tgt}.`
         : `Parse an XML tag from ${src} (tag name not yet specified) into ${tgt}.`;
+    case "aggregate": {
+      const op = (rule.v || "sum").toLowerCase();
+      switch (op) {
+        case "count":
+          return `Count iterations of ${src} and write the total to ${tgt}.`;
+        case "sum":
+          return `Sum ${src} across all iterations and write to ${tgt}.`;
+        case "avg":
+          return `Average ${src} across all iterations and write to ${tgt}.`;
+        case "min":
+          return `Take the minimum ${src} across all iterations and write to ${tgt}.`;
+        case "max":
+          return `Take the maximum ${src} across all iterations and write to ${tgt}.`;
+        case "first":
+          return `Write the first non-empty ${src} to ${tgt}.`;
+        case "last":
+          return `Write the last non-empty ${src} to ${tgt}.`;
+        default:
+          return `Aggregate ${src} across iterations using ${op} and write to ${tgt}.`;
+      }
+    }
     default:
       return `Apply ${rule.rt} to ${src} → ${tgt}.`;
   }

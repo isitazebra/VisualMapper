@@ -35,7 +35,8 @@ export type RuleTypeId =
   | "dateFormat"
   | "passthrough"
   | "hlCounter"
-  | "splitField";
+  | "splitField"
+  | "aggregate";
 
 export interface RuleTypeMeta {
   /** Label shown in the dropdown. */
