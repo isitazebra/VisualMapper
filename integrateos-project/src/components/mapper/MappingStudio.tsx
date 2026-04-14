@@ -9,50 +9,57 @@ import {
   getSchemaById,
   getSourceSchema,
   getTargetSchema,
-  builtinSourceSchemaId,
-  builtinTargetSchemaId,
 } from "@/lib/schemas";
+import type { SchemaDescriptor } from "@/lib/schemas/registry";
 import type { HydratedMappingSpec } from "@/lib/mappingSpec";
 import { useDebouncedEffect } from "@/lib/useDebouncedEffect";
 import { MapperToolbar } from "./MapperToolbar";
 import { TreePanel } from "./TreePanel";
 import { RulePanel } from "./RulePanel";
+import { PreviewPanel } from "./PreviewPanel";
 
 interface MappingStudioProps {
   /** If present, the studio loads this spec and autosaves changes. */
   initialSpec?: HydratedMappingSpec;
+  /** Pre-resolved source schema (built-in or custom). Required when
+   * initialSpec is set — the server page does the lookup. */
+  sourceDescriptor?: SchemaDescriptor;
+  /** Pre-resolved target schema. */
+  targetDescriptor?: SchemaDescriptor;
 }
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
+type BottomTab = "rule" | "preview";
 
 /** Top-level mapping studio — orchestrates state and the three panels. */
-export function MappingStudio({ initialSpec }: MappingStudioProps) {
+export function MappingStudio({
+  initialSpec,
+  sourceDescriptor,
+  targetDescriptor,
+}: MappingStudioProps) {
   const [state, dispatch] = useReducer(
     mapperReducer,
     initialSpec ? stateFromSpec(initialSpec) : initialMapperState,
   );
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
-  // Skip the very first autosave tick — it fires immediately after mount
-  // because `state` is a fresh reference, but nothing actually changed.
+  const [bottomTab, setBottomTab] = useState<BottomTab>("rule");
+  const [sample, setSample] = useState<string>(initialSpec?.samplePayload ?? "");
   const hasMounted = useRef(false);
+  const sampleMounted = useRef(false);
 
-  // Prefer registry lookup via the stored schema ids (Phase 2.1). Fall
-  // back to the legacy tx/fmt resolution for the ephemeral /mapper route
-  // which has no persisted spec.
-  const sourceSchemaId =
-    initialSpec?.sourceSchemaId ?? builtinSourceSchemaId(state.tx);
-  const targetSchemaId =
-    initialSpec?.targetSchemaId ?? builtinTargetSchemaId(state.tx, state.fmt);
+  const sourceSchemaDesc = useMemo(() => {
+    if (sourceDescriptor) return sourceDescriptor;
+    if (initialSpec) return getSchemaById(initialSpec.sourceSchemaId);
+    return null;
+  }, [sourceDescriptor, initialSpec]);
 
-  const sourceSchemaDesc = useMemo(
-    () => getSchemaById(sourceSchemaId),
-    [sourceSchemaId],
-  );
-  const targetSchemaDesc = useMemo(
-    () => getSchemaById(targetSchemaId),
-    [targetSchemaId],
-  );
+  const targetSchemaDesc = useMemo(() => {
+    if (targetDescriptor) return targetDescriptor;
+    if (initialSpec) return getSchemaById(initialSpec.targetSchemaId);
+    return null;
+  }, [targetDescriptor, initialSpec]);
+
   const sourceSchema = useMemo(
     () => sourceSchemaDesc?.nodes ?? getSourceSchema(state.tx),
     [sourceSchemaDesc, state.tx],
@@ -69,7 +76,7 @@ export function MappingStudio({ initialSpec }: MappingStudioProps) {
     overrides: state.maps.filter((m) => m.co).length,
   };
 
-  // Debounced autosave — only active when we have a persisted spec.
+  // Debounced autosave on maps / metadata changes.
   useDebouncedEffect(
     () => {
       if (!initialSpec) return;
@@ -77,13 +84,33 @@ export function MappingStudio({ initialSpec }: MappingStudioProps) {
         hasMounted.current = true;
         return;
       }
-      void saveSpec(initialSpec.id, state.maps, state.tx, state.ver, state.fmt, {
-        setStatus: setSaveStatus,
-        setError: setSaveError,
-      });
+      void saveSpec(
+        initialSpec.id,
+        { maps: state.maps, txType: state.tx, ediVersion: state.ver, targetFormat: state.fmt },
+        { setStatus: setSaveStatus, setError: setSaveError },
+      );
     },
     [state.maps, state.tx, state.ver, state.fmt],
     500,
+  );
+
+  // Separate debounced save for the sample payload — bursty typing
+  // shouldn't spam the server.
+  useDebouncedEffect(
+    () => {
+      if (!initialSpec) return;
+      if (!sampleMounted.current) {
+        sampleMounted.current = true;
+        return;
+      }
+      void saveSpec(
+        initialSpec.id,
+        { samplePayload: sample },
+        { setStatus: setSaveStatus, setError: setSaveError },
+      );
+    },
+    [sample],
+    800,
   );
 
   const sourceBadge = sourceSchemaDesc
@@ -98,6 +125,8 @@ export function MappingStudio({ initialSpec }: MappingStudioProps) {
         ? "CSV"
         : "XML";
   const targetTitle = targetSchemaDesc?.displayName ?? FMT_LABELS[state.fmt];
+
+  const bottomHeight = bottomTab === "preview" ? 360 : 180;
 
   return (
     <div
@@ -128,11 +157,7 @@ export function MappingStudio({ initialSpec }: MappingStudioProps) {
           otherSchema={targetSchema}
           state={state}
           dispatch={dispatch}
-          header={{
-            badge: sourceBadge,
-            badgeColor: "blue",
-            title: sourceTitle,
-          }}
+          header={{ badge: sourceBadge, badgeColor: "blue", title: sourceTitle }}
           columns={{ segment: "Segment", description: "Description", third: "Sample" }}
         />
         <TreePanel
@@ -141,49 +166,93 @@ export function MappingStudio({ initialSpec }: MappingStudioProps) {
           otherSchema={sourceSchema}
           state={state}
           dispatch={dispatch}
-          header={{
-            badge: targetBadge,
-            badgeColor: "purple",
-            title: targetTitle,
-          }}
+          header={{ badge: targetBadge, badgeColor: "purple", title: targetTitle }}
           columns={{ segment: "Field / Path", description: "Description" }}
         />
       </div>
 
       <div
         style={{
-          height: 180,
+          height: bottomHeight,
           borderTop: `2px solid ${COLORS.bHard}`,
           background: COLORS.paper,
           flexShrink: 0,
           overflow: "hidden",
+          transition: "height 150ms ease-out",
         }}
       >
         <div
           style={{
-            padding: "3px 8px",
+            padding: "0 8px",
             borderBottom: `1px solid ${COLORS.border}`,
             background: COLORS.cream,
-            fontSize: 8,
-            fontWeight: 700,
+            display: "flex",
+            gap: 4,
+            alignItems: "stretch",
+            height: 22,
           }}
         >
-          📐 Rule Detail
+          <TabButton active={bottomTab === "rule"} onClick={() => setBottomTab("rule")}>
+            📐 Rule Detail
+          </TabButton>
+          <TabButton active={bottomTab === "preview"} onClick={() => setBottomTab("preview")}>
+            👁 Live Preview
+          </TabButton>
         </div>
-        <div style={{ height: "calc(100% - 22px)" }}>
-          <RulePanel
-            state={state}
-            dispatch={dispatch}
-            sourceSchema={sourceSchema}
-            targetSchema={targetSchema}
-          />
+
+        <div style={{ height: `calc(100% - 22px)` }}>
+          {bottomTab === "rule" ? (
+            <RulePanel
+              state={state}
+              dispatch={dispatch}
+              sourceSchema={sourceSchema}
+              targetSchema={targetSchema}
+            />
+          ) : (
+            <PreviewPanel
+              sourceDescriptor={sourceSchemaDesc}
+              targetDescriptor={targetSchemaDesc}
+              maps={state.maps}
+              activeCustomer={state.cust}
+              sample={sample}
+              onSampleChange={setSample}
+            />
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-/** Short badge label shown next to the panel header. */
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        border: "none",
+        background: active ? COLORS.paper : "transparent",
+        borderBottom: active ? `2px solid ${COLORS.blue}` : "2px solid transparent",
+        padding: "0 10px",
+        cursor: "pointer",
+        fontSize: 9,
+        fontWeight: 700,
+        color: active ? COLORS.tx : COLORS.t2,
+        fontFamily: FONT_SANS,
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
 function formatBadge(format: string, version?: string): string {
   switch (format) {
     case "x12":
@@ -202,10 +271,7 @@ function formatBadge(format: string, version?: string): string {
 
 async function saveSpec(
   id: string,
-  maps: unknown,
-  txType: string,
-  ediVersion: string,
-  targetFormat: string,
+  payload: Record<string, unknown>,
   ctx: {
     setStatus: (s: SaveStatus) => void;
     setError: (msg: string | null) => void;
@@ -217,7 +283,7 @@ async function saveSpec(
     const res = await fetch(`/api/mappings/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ maps, txType, ediVersion, targetFormat }),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error(await res.text());
     ctx.setStatus("saved");

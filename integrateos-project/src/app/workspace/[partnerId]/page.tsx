@@ -3,7 +3,12 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { checkDb } from "@/lib/dbHealth";
 import { DbSetupBanner } from "@/components/common/DbSetupBanner";
-import { NewMappingForm } from "@/components/workspace/NewMappingForm";
+import {
+  NewMappingForm,
+  type SchemaSummary,
+} from "@/components/workspace/NewMappingForm";
+import { BUILTIN_SCHEMAS } from "@/lib/schemas";
+import type { SchemaNode } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -15,13 +20,48 @@ export default async function PartnerWorkspacePage({
   const error = await checkDb();
   if (error) return <DbSetupBanner error={error} />;
 
-  const partner = await prisma.partner.findUnique({
-    where: { id: params.partnerId },
-    include: {
-      mappings: { orderBy: { updatedAt: "desc" } },
-    },
-  });
+  const [partner, customSchemas] = await Promise.all([
+    prisma.partner.findUnique({
+      where: { id: params.partnerId },
+      include: { mappings: { orderBy: { updatedAt: "desc" } } },
+    }),
+    prisma.schema.findMany({
+      where: { OR: [{ partnerId: null }, { partnerId: params.partnerId }] },
+      orderBy: { createdAt: "desc" },
+    }),
+  ]);
   if (!partner) notFound();
+
+  // Build schema summary lists for the picker. Builtins already know
+  // their role; customs come straight from the DB row.
+  const schemaSummaries = (role: "source" | "target"): SchemaSummary[] => {
+    const builtins = BUILTIN_SCHEMAS.filter(
+      (s) => s.role === role || s.role === "both",
+    ).map<SchemaSummary>((s) => ({
+      id: s.id,
+      kind: "builtin",
+      role: s.role,
+      format: s.format,
+      displayName: s.displayName,
+      description: s.description ?? null,
+      leafCount: s.nodes.filter((n) => n.type === "el").length,
+    }));
+    const customs = customSchemas
+      .filter((r) => r.role === role || r.role === "both")
+      .map<SchemaSummary>((r) => ({
+        id: r.id,
+        kind: "custom",
+        role: r.role,
+        format: r.format,
+        displayName: r.displayName,
+        description: r.description,
+        leafCount: Array.isArray(r.nodes)
+          ? (r.nodes as unknown as SchemaNode[]).filter((n) => n.type === "el").length
+          : 0,
+      }));
+    // Customs first so users see their recent uploads on top.
+    return [...customs, ...builtins];
+  };
 
   return (
     <main className="min-h-screen bg-paper-bg text-ink px-8 py-10 font-sans">
@@ -86,8 +126,17 @@ export default async function PartnerWorkspacePage({
           <aside>
             <div className="border border-border rounded p-4 bg-paper">
               <h2 className="text-base font-bold mb-2">New mapping</h2>
-              <NewMappingForm partnerId={partner.id} />
+              <NewMappingForm
+                partnerId={partner.id}
+                sourceSchemas={schemaSummaries("source")}
+                targetSchemas={schemaSummaries("target")}
+              />
             </div>
+            <p className="text-[11px] text-ink-mute mt-3">
+              <Link href="/schemas" className="underline">
+                Browse all schemas →
+              </Link>
+            </p>
           </aside>
         </div>
       </div>

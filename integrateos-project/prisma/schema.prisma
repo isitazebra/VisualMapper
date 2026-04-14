@@ -16,6 +16,28 @@ datasource db {
   directUrl = env("DATABASE_URL_UNPOOLED")
 }
 
+// ─── Custom schema (source or target) inferred from an uploaded sample ───
+// Built-in schemas live in code (src/lib/schemas/registry.ts); custom
+// ones live here. MappingSpec.sourceSchemaId / targetSchemaId can point
+// at either — the id convention is `custom:<cuid>` for rows in this
+// table.
+model Schema {
+  id          String   @id
+  partnerId   String?
+  partner     Partner? @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  role        String   // "source" | "target" | "both"
+  format      String   // "x12" | "xml" | "json" | "otm_xml" | "csv"
+  displayName String
+  description String?
+  nodes       Json     // SchemaNode[] — see src/lib/types.ts
+  createdBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([partnerId])
+  @@index([format, role])
+}
+
 // ─── Partners (trading partners being onboarded) ───
 model Partner {
   id          String   @id @default(cuid())
@@ -29,6 +51,7 @@ model Partner {
   updatedAt   DateTime @updatedAt
 
   mappings MappingSpec[]
+  schemas  Schema[]
 }
 
 // ─── A mapping spec (one transaction type × direction for a partner) ───
@@ -51,6 +74,10 @@ model MappingSpec {
   targetSchemaId String?
   direction    String  @default("inbound") // inbound | outbound
   status       String  @default("draft") // draft | review | confirmed | live
+  // Optional saved sample payload used by the studio's live preview.
+  // Persisted so it survives page refreshes. Shape is free-form — the
+  // format is determined by the source schema.
+  samplePayload String? @db.Text
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

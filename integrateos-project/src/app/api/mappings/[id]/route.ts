@@ -18,41 +18,44 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
 }
 
 /**
- * PATCH /api/mappings/[id] — upsert-all sync. The client sends its full
- * current `maps: FieldMap[]` and any metadata changes; we replace the
- * FieldMapping + CustomerOverride rows to match.
+ * PATCH /api/mappings/[id] — partial update. Accepts any subset of:
+ *   { maps, name, txType, ediVersion, targetFormat, status, samplePayload }
  *
- * This is intentionally coarse for the MVP — a single autosave round-trip
- * handles any combination of adds/edits/deletes. Volume is bounded (a
- * large 850 has ~50 base maps + ~20 overrides), so the cost is fine.
+ * When `maps` is included the FieldMapping + CustomerOverride rows are
+ * wiped and re-inserted inside a transaction. When `maps` is NOT
+ * included we only update the scalar columns — important so the sample
+ * payload can be saved without touching the field mappings.
  */
 export async function PATCH(request: Request, { params }: { params: { id: string } }) {
   const body = await request.json();
-  const maps: FieldMap[] = Array.isArray(body.maps) ? body.maps : [];
+  const hasMapsUpdate = Array.isArray(body.maps);
+  const maps: FieldMap[] = hasMapsUpdate ? (body.maps as FieldMap[]) : [];
 
-  const { baseRows, overrideRows } = splitMapsForDb(params.id, maps);
-
-  const metadataUpdate: Record<string, string> = {};
+  const metadataUpdate: Record<string, string | null> = {};
   for (const key of ["name", "txType", "ediVersion", "targetFormat", "status"] as const) {
     if (typeof body[key] === "string") metadataUpdate[key] = body[key];
   }
+  if (body.samplePayload !== undefined) {
+    metadataUpdate.samplePayload =
+      typeof body.samplePayload === "string" ? body.samplePayload : null;
+  }
 
-  // One transaction: update spec metadata, wipe existing children, insert new ones.
   const updated = await prisma.$transaction(async (tx) => {
     const spec = await tx.mappingSpec.update({
       where: { id: params.id },
       data: metadataUpdate,
     });
 
-    // Cascade-deletes the overrides too because of onDelete: Cascade on
-    // CustomerOverride.fieldMappingId.
-    await tx.fieldMapping.deleteMany({ where: { mappingSpecId: params.id } });
-
-    if (baseRows.length > 0) {
-      await tx.fieldMapping.createMany({ data: baseRows });
-    }
-    if (overrideRows.length > 0) {
-      await tx.customerOverride.createMany({ data: overrideRows });
+    if (hasMapsUpdate) {
+      // Cascade-deletes the overrides via the onDelete: Cascade FK.
+      await tx.fieldMapping.deleteMany({ where: { mappingSpecId: params.id } });
+      const { baseRows, overrideRows } = splitMapsForDb(params.id, maps);
+      if (baseRows.length > 0) {
+        await tx.fieldMapping.createMany({ data: baseRows });
+      }
+      if (overrideRows.length > 0) {
+        await tx.customerOverride.createMany({ data: overrideRows });
+      }
     }
 
     return tx.mappingSpec.findUnique({

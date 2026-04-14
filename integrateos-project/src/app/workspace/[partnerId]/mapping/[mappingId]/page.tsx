@@ -4,6 +4,7 @@ import { checkDb } from "@/lib/dbHealth";
 import { DbSetupBanner } from "@/components/common/DbSetupBanner";
 import { MappingStudio } from "@/components/mapper/MappingStudio";
 import { flattenDbSpec } from "@/lib/mappingSpec";
+import { resolveSchemas } from "@/lib/schemas/resolver";
 
 export const dynamic = "force-dynamic";
 
@@ -22,5 +23,18 @@ export default async function MappingStudioPage({
   if (!spec || spec.partnerId !== params.partnerId) notFound();
 
   const hydrated = flattenDbSpec(spec);
-  return <MappingStudio initialSpec={hydrated} />;
+  // Resolve both schema descriptors server-side so the client never has
+  // to hit /api/schemas itself.
+  const [source, target] = await resolveSchemas(prisma, [
+    hydrated.sourceSchemaId,
+    hydrated.targetSchemaId,
+  ]);
+
+  return (
+    <MappingStudio
+      initialSpec={hydrated}
+      sourceDescriptor={source ?? undefined}
+      targetDescriptor={target ?? undefined}
+    />
+  );
 }
