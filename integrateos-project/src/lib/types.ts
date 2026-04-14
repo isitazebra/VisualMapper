@@ -83,9 +83,9 @@ export interface MapperState {
   view: "mapping" | "overrides" | "changelog";
 }
 
-/** One operation produced by the AI compose flow. Kept in this file
- * so the reducer can dispatch on it without importing from the ai lib
- * (which pulls in the SDK). */
+/** One operation produced by the AI compose / auto-map flows. Kept in
+ * this file so the reducer can dispatch on it without importing from
+ * the ai lib (which pulls in the SDK). */
 export interface AiProposedOperation {
   sourceFieldId: string;
   targetFieldId: string;
@@ -100,6 +100,10 @@ export interface AiProposedOperation {
     condition?: string;
     notes?: string;
   }>;
+  /** Bulk auto-map only — 0 to 1 model confidence. */
+  confidence?: number;
+  /** Bulk auto-map only — short per-op reasoning. */
+  aiReasoning?: string;
 }
 
 export type MapperAction =
