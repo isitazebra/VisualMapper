@@ -3,7 +3,15 @@
 import { useMemo, useReducer, useRef, useState } from "react";
 import { COLORS, FONT_SANS } from "@/lib/rules";
 import { initialMapperState, mapperReducer, stateFromSpec } from "@/lib/mapperState";
-import { getSourceSchema, getTargetSchema, TX_LABELS, FMT_LABELS } from "@/lib/schemas";
+import {
+  FMT_LABELS,
+  TX_LABELS,
+  getSchemaById,
+  getSourceSchema,
+  getTargetSchema,
+  builtinSourceSchemaId,
+  builtinTargetSchemaId,
+} from "@/lib/schemas";
 import type { HydratedMappingSpec } from "@/lib/mappingSpec";
 import { useDebouncedEffect } from "@/lib/useDebouncedEffect";
 import { MapperToolbar } from "./MapperToolbar";
@@ -29,8 +37,30 @@ export function MappingStudio({ initialSpec }: MappingStudioProps) {
   // because `state` is a fresh reference, but nothing actually changed.
   const hasMounted = useRef(false);
 
-  const sourceSchema = useMemo(() => getSourceSchema(state.tx), [state.tx]);
-  const targetSchema = useMemo(() => getTargetSchema(state.tx, state.fmt), [state.tx, state.fmt]);
+  // Prefer registry lookup via the stored schema ids (Phase 2.1). Fall
+  // back to the legacy tx/fmt resolution for the ephemeral /mapper route
+  // which has no persisted spec.
+  const sourceSchemaId =
+    initialSpec?.sourceSchemaId ?? builtinSourceSchemaId(state.tx);
+  const targetSchemaId =
+    initialSpec?.targetSchemaId ?? builtinTargetSchemaId(state.tx, state.fmt);
+
+  const sourceSchemaDesc = useMemo(
+    () => getSchemaById(sourceSchemaId),
+    [sourceSchemaId],
+  );
+  const targetSchemaDesc = useMemo(
+    () => getSchemaById(targetSchemaId),
+    [targetSchemaId],
+  );
+  const sourceSchema = useMemo(
+    () => sourceSchemaDesc?.nodes ?? getSourceSchema(state.tx),
+    [sourceSchemaDesc, state.tx],
+  );
+  const targetSchema = useMemo(
+    () => targetSchemaDesc?.nodes ?? getTargetSchema(state.tx, state.fmt),
+    [targetSchemaDesc, state.tx, state.fmt],
+  );
 
   const baseMaps = state.maps.filter((m) => !m.co);
   const stats = {
@@ -56,7 +86,18 @@ export function MappingStudio({ initialSpec }: MappingStudioProps) {
     500,
   );
 
-  const targetBadge = state.fmt === "json" ? "{}" : state.fmt === "csv" ? "CSV" : "XML";
+  const sourceBadge = sourceSchemaDesc
+    ? formatBadge(sourceSchemaDesc.format, state.ver)
+    : `X12 ${state.ver}`;
+  const sourceTitle = sourceSchemaDesc?.displayName ?? TX_LABELS[state.tx];
+  const targetBadge = targetSchemaDesc
+    ? formatBadge(targetSchemaDesc.format)
+    : state.fmt === "json"
+      ? "{}"
+      : state.fmt === "csv"
+        ? "CSV"
+        : "XML";
+  const targetTitle = targetSchemaDesc?.displayName ?? FMT_LABELS[state.fmt];
 
   return (
     <div
@@ -88,9 +129,9 @@ export function MappingStudio({ initialSpec }: MappingStudioProps) {
           state={state}
           dispatch={dispatch}
           header={{
-            badge: `X12 ${state.ver}`,
+            badge: sourceBadge,
             badgeColor: "blue",
-            title: TX_LABELS[state.tx],
+            title: sourceTitle,
           }}
           columns={{ segment: "Segment", description: "Description", third: "Sample" }}
         />
@@ -103,7 +144,7 @@ export function MappingStudio({ initialSpec }: MappingStudioProps) {
           header={{
             badge: targetBadge,
             badgeColor: "purple",
-            title: FMT_LABELS[state.fmt],
+            title: targetTitle,
           }}
           columns={{ segment: "Field / Path", description: "Description" }}
         />
@@ -140,6 +181,23 @@ export function MappingStudio({ initialSpec }: MappingStudioProps) {
       </div>
     </div>
   );
+}
+
+/** Short badge label shown next to the panel header. */
+function formatBadge(format: string, version?: string): string {
+  switch (format) {
+    case "x12":
+      return `X12 ${version ?? ""}`.trim();
+    case "json":
+      return "{}";
+    case "csv":
+      return "CSV";
+    case "xml":
+    case "otm_xml":
+      return "XML";
+    default:
+      return format.toUpperCase();
+  }
 }
 
 async function saveSpec(

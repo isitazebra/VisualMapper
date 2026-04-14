@@ -20,6 +20,7 @@ import type {
   TargetFormat,
   TxType,
 } from "./types";
+import { builtinSourceSchemaId, builtinTargetSchemaId } from "./schemas/registry";
 
 /** Shape returned by GET /api/mappings/[id] and consumed on the client. */
 export interface HydratedMappingSpec {
@@ -29,6 +30,11 @@ export interface HydratedMappingSpec {
   txType: TxType;
   ediVersion: EdiVersion;
   targetFormat: TargetFormat;
+  /** Registry ids — see src/lib/schemas/registry.ts. Always populated
+   * post-backfill; for legacy safety we fall back to the tx/fmt-derived
+   * ids on the client. */
+  sourceSchemaId: string;
+  targetSchemaId: string;
   status: string;
   maps: FieldMap[];
 }
@@ -82,13 +88,18 @@ export function flattenDbSpec(spec: DbSpecWithChildren): HydratedMappingSpec {
     }
   }
 
+  const tx = spec.txType as TxType;
+  const fmt = spec.targetFormat as TargetFormat;
   return {
     id: spec.id,
     partnerId: spec.partnerId,
     name: spec.name,
-    txType: spec.txType as TxType,
+    txType: tx,
     ediVersion: spec.ediVersion as EdiVersion,
-    targetFormat: spec.targetFormat as TargetFormat,
+    targetFormat: fmt,
+    // Backfill should populate these; belt-and-suspenders for older rows.
+    sourceSchemaId: spec.sourceSchemaId ?? builtinSourceSchemaId(tx),
+    targetSchemaId: spec.targetSchemaId ?? builtinTargetSchemaId(tx, fmt),
     status: spec.status,
     maps,
   };

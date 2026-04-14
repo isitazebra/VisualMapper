@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { builtinSourceSchemaId, builtinTargetSchemaId } from "@/lib/schemas/registry";
+import type { TargetFormat, TxType } from "@/lib/types";
 
 /** GET /api/partners/[id]/mappings — list mapping specs for a partner. */
 export async function GET(_req: Request, { params }: { params: { id: string } }) {
@@ -40,6 +42,11 @@ export async function POST(request: Request, { params }: { params: { id: string 
       targetFormat,
       direction: body.direction ?? "inbound",
       status: "draft",
+      sourceSchemaId:
+        body.sourceSchemaId ?? builtinSourceSchemaId(txType as TxType),
+      targetSchemaId:
+        body.targetSchemaId ??
+        builtinTargetSchemaId(txType as TxType, targetFormat as TargetFormat),
     },
   });
   return NextResponse.json(spec, { status: 201 });
