@@ -51,6 +51,9 @@ interface EmitCtx {
   extract: ExtractResult;
   rulesByTargetId: Map<string, FieldMap>;
   applyCtx: ApplyContext;
+  /** Mutated in-place by the emit walkers so applyCtx.resolveSource
+   * (which closes over this) sees the current iteration state. */
+  iterCtxRef: { current: Map<string, number> };
 }
 
 function buildEmitCtx(params: EmitParams): EmitCtx {
@@ -61,6 +64,23 @@ function buildEmitCtx(params: EmitParams): EmitCtx {
     params.rulesByTargetId,
     sourceLeafToLoop,
   );
+  // resolveSource is filled in per-iteration below so concat-template
+  // rules see the correct value for the current loop scope. The ctx
+  // here holds a reference; we mutate its closure-captured iterCtx as
+  // the emitter walks.
+  const iterCtxRef = { current: new Map<string, number>() };
+  const applyCtx: ApplyContext = {
+    counters: new Map(),
+    resolveSource: (sourceId: string) => {
+      const arr = params.extract.values.get(sourceId);
+      if (!arr) return undefined;
+      const loop = sourceLeafToLoop.get(sourceId);
+      if (loop && iterCtxRef.current.has(loop)) {
+        return arr[iterCtxRef.current.get(loop)!];
+      }
+      return arr[0];
+    },
+  };
   return {
     targetDescriptor: params.targetDescriptor,
     targetById,
@@ -68,7 +88,8 @@ function buildEmitCtx(params: EmitParams): EmitCtx {
     driverByTargetLoop,
     extract: params.extract,
     rulesByTargetId: params.rulesByTargetId,
-    applyCtx: { counters: new Map() },
+    applyCtx,
+    iterCtxRef,
   };
 }
 
@@ -121,7 +142,7 @@ function resolveSource(
 function emitJson(ctx: EmitCtx): string {
   const tops = topLevelNodes(ctx.targetDescriptor.nodes);
   const obj: Record<string, unknown> = {};
-  const iterCtx = new Map<string, number>();
+  const iterCtx = ctx.iterCtxRef.current;
   for (const n of tops) {
     const v = buildJson(n, iterCtx, ctx);
     if (v !== undefined) obj[jsonKey(n)] = v;
@@ -184,7 +205,7 @@ function emitXml(ctx: EmitCtx): string {
   const tops = topLevelNodes(ctx.targetDescriptor.nodes);
   const rootName = ctx.targetDescriptor.txType ? ctx.targetDescriptor.txType : "Root";
   const lines: string[] = [`<${rootName}>`];
-  const iterCtx = new Map<string, number>();
+  const iterCtx = ctx.iterCtxRef.current;
   for (const n of tops) buildXml(n, iterCtx, ctx, lines, 1);
   lines.push(`</${rootName}>`);
   return lines.join("\n");
@@ -258,7 +279,7 @@ function escapeXml(v: string): string {
 function emitCsv(ctx: EmitCtx): string {
   const leaves = ctx.targetDescriptor.nodes.filter((n) => n.type === "el");
   const headers = leaves.map((n) => n.label);
-  const iterCtx = new Map<string, number>();
+  const iterCtx = ctx.iterCtxRef.current;
   const row = leaves.map((n) => {
     const rule = ctx.rulesByTargetId.get(n.id);
     if (!rule) return "";

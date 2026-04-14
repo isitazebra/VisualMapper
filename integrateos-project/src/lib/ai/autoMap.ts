@@ -33,7 +33,10 @@ RULES
 - Don't remap targets that are already mapped in the existing-mappings list — skip them silently.
 - Don't create multiple operations for the same target id.
 - Prefer simple, direct passthroughs over complex rules unless the semantics clearly require otherwise.
-- For EDI → canonical format pairs, trust that same-name fields (e.g. "city" / "cityName") are a direct match.`;
+- For EDI → canonical format pairs, trust that same-name fields (e.g. "city" / "cityName") are a direct match.
+- When the target is clearly a date/timestamp (labels like "Date", "Timestamp", "EventDate") and the source is an 8-digit X12 date, use ruleType="dateFormat" with value="YYYYMMDD->ISO". Similarly for time fields.
+- When a monetary target expects dollars but the source is in cents (common for X12 B3*07, L3*05, etc.), use ruleType="formula" with value="cents_to_dollars".
+- Country codes: value="country_2to3" or "country_3to2" as appropriate.`;
 
 function buildTool() {
   return {
