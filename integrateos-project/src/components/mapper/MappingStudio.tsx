@@ -17,6 +17,7 @@ import { MapperToolbar } from "./MapperToolbar";
 import { TreePanel } from "./TreePanel";
 import { RulePanel } from "./RulePanel";
 import { PreviewPanel } from "./PreviewPanel";
+import { ComposeBar } from "./ComposeBar";
 
 interface MappingStudioProps {
   /** If present, the studio loads this spec and autosaves changes. */
@@ -150,6 +151,16 @@ export function MappingStudio({
         partnerId={initialSpec?.partnerId}
         mappingId={initialSpec?.id}
       />
+
+      {initialSpec && (
+        <ComposeBar
+          mappingId={initialSpec.id}
+          dispatch={dispatch}
+          sourceNodes={sourceSchema}
+          targetNodes={targetSchema}
+          currentMaps={state.maps}
+        />
+      )}
 
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         <TreePanel

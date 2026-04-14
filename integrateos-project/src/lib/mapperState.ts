@@ -158,6 +158,55 @@ export function mapperReducer(state: MapperState, action: MapperAction): MapperS
     case "AUTO":
       return { ...state, maps: [...state.maps, ...autoMap(state)] };
 
+    case "APPLY_OPS": {
+      // Replace-or-create semantics: for each op, remove any existing
+      // base mapping at (sid, tid) and any overrides for the same
+      // (sid, tid, customer), then insert the new rows.
+      let next = state.maps.slice();
+      let idCounter = Date.now();
+      const nextId = (): string => `m${idCounter++}`;
+
+      for (const op of action.ops) {
+        // Remove existing base at same (sid, tid).
+        next = next.filter((m) => !(m.sid === op.sourceFieldId && m.tid === op.targetFieldId && m.co === null));
+
+        const baseId = nextId();
+        next.push({
+          id: baseId,
+          sid: op.sourceFieldId,
+          tid: op.targetFieldId,
+          rt: op.ruleType,
+          v: op.value ?? "",
+          co: null,
+          cond: op.condition ?? "",
+          ok: false,
+          note: op.notes ?? "",
+        });
+
+        for (const o of op.overrides ?? []) {
+          // Remove any existing override for same (sid, tid, customer).
+          next = next.filter(
+            (m) =>
+              !(m.sid === op.sourceFieldId &&
+                m.tid === op.targetFieldId &&
+                m.co === o.customerName),
+          );
+          next.push({
+            id: nextId(),
+            sid: op.sourceFieldId,
+            tid: op.targetFieldId,
+            rt: o.ruleType,
+            v: o.value ?? "",
+            co: o.customerName,
+            cond: o.condition ?? "",
+            ok: false,
+            note: o.notes ?? "",
+          });
+        }
+      }
+      return { ...state, maps: next };
+    }
+
     default:
       return state;
   }

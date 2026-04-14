@@ -83,6 +83,25 @@ export interface MapperState {
   view: "mapping" | "overrides" | "changelog";
 }
 
+/** One operation produced by the AI compose flow. Kept in this file
+ * so the reducer can dispatch on it without importing from the ai lib
+ * (which pulls in the SDK). */
+export interface AiProposedOperation {
+  sourceFieldId: string;
+  targetFieldId: string;
+  ruleType: RuleTypeId;
+  value?: string;
+  condition?: string;
+  notes?: string;
+  overrides?: Array<{
+    customerName: string;
+    ruleType: RuleTypeId;
+    value?: string;
+    condition?: string;
+    notes?: string;
+  }>;
+}
+
 export type MapperAction =
   | { type: "TOG"; id: string }
   | { type: "SEL_SRC"; id: string }
@@ -96,4 +115,7 @@ export type MapperAction =
   | { type: "VER"; v: EdiVersion }
   | { type: "FMT"; v: TargetFormat }
   | { type: "VIEW"; v: MapperState["view"] }
-  | { type: "AUTO" };
+  | { type: "AUTO" }
+  /** Apply a batch of AI-proposed operations atomically. Replaces any
+   * existing base/override at the same (sid, tid[, co]) key. */
+  | { type: "APPLY_OPS"; ops: AiProposedOperation[] };
