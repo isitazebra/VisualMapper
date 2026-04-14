@@ -27,6 +27,8 @@ interface MappingStudioProps {
   sourceDescriptor?: SchemaDescriptor;
   /** Pre-resolved target schema. */
   targetDescriptor?: SchemaDescriptor;
+  /** Lookup tables visible to this mapping (global + partner-scoped). */
+  lookupTables?: Record<string, Record<string, string>>;
 }
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
@@ -37,6 +39,7 @@ export function MappingStudio({
   initialSpec,
   sourceDescriptor,
   targetDescriptor,
+  lookupTables,
 }: MappingStudioProps) {
   const [state, dispatch] = useReducer(
     mapperReducer,
@@ -228,6 +231,7 @@ export function MappingStudio({
               activeCustomer={state.cust}
               sample={sample}
               onSampleChange={setSample}
+              lookupTables={lookupTables}
             />
           )}
         </div>

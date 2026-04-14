@@ -23,18 +23,35 @@ export default async function MappingStudioPage({
   if (!spec || spec.partnerId !== params.partnerId) notFound();
 
   const hydrated = flattenDbSpec(spec);
-  // Resolve both schema descriptors server-side so the client never has
-  // to hit /api/schemas itself.
   const [source, target] = await resolveSchemas(prisma, [
     hydrated.sourceSchemaId,
     hydrated.targetSchemaId,
   ]);
+
+  // Load all lookup tables visible to this partner (global + partner-
+  // scoped) so the live preview can execute `lookup` rules.
+  const lookups = await prisma.lookupTable.findMany({
+    where: {
+      OR: [{ partnerId: null }, { partnerId: params.partnerId }],
+    },
+  });
+  const lookupTables: Record<string, Record<string, string>> = {};
+  for (const row of lookups) {
+    if (
+      row.entries &&
+      typeof row.entries === "object" &&
+      !Array.isArray(row.entries)
+    ) {
+      lookupTables[row.name] = row.entries as Record<string, string>;
+    }
+  }
 
   return (
     <MappingStudio
       initialSpec={hydrated}
       sourceDescriptor={source ?? undefined}
       targetDescriptor={target ?? undefined}
+      lookupTables={lookupTables}
     />
   );
 }

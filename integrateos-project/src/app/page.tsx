@@ -75,6 +75,9 @@ export default async function LandingPage() {
           <Link href="/schemas" className="underline">
             Browse schemas →
           </Link>
+          <Link href="/lookups" className="underline">
+            Lookup tables →
+          </Link>
           <Link href="/mapper" className="underline">
             Open mapper without persistence →
           </Link>

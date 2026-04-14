@@ -26,6 +26,9 @@ export interface ApplyContext {
    * can reference other source fields honoring the current iteration
    * context. Returns undefined for unknown ids or missing values. */
   resolveSource?: (sourceId: string) => string | undefined;
+  /** Lookup tables by name (LookupTable.name → entries map). Populated
+   * by the caller of runTransform. */
+  lookupTables?: Map<string, Record<string, string>>;
 }
 
 const xmlParser = new XMLParser({
@@ -84,10 +87,7 @@ export function applyRule(
       return evaluateConditional(rule, sourceValue, ctx);
 
     case "lookup":
-      // lookup table execution lands in Phase 2.5c
-      return rule.v
-        ? `⟨lookup:${rule.v}?⟩${sourceValue ? ` ${sourceValue}` : ""}`
-        : `⟨lookup?⟩${sourceValue ? ` ${sourceValue}` : ""}`;
+      return applyLookup(rule.v ?? "", sourceValue ?? "", ctx);
 
     default:
       return `⟨${rule.rt}?⟩${sourceValue ? ` ${sourceValue}` : ""}`;
@@ -142,6 +142,23 @@ function applySplit(source: string, spec: string): string {
   if (Number.isNaN(end)) return source.slice(start);
   if (end < 0) end = Math.max(0, source.length + end);
   return source.slice(start, end);
+}
+
+/** lookup: rule.v is a LookupTable.name, sourceValue is the key.
+ * Unknown tables → placeholder so the user can see which table is
+ * missing. Unknown keys → pass source through unchanged. */
+function applyLookup(
+  tableName: string,
+  sourceValue: string,
+  ctx: ApplyContext,
+): string {
+  if (!tableName) return sourceValue;
+  const table = ctx.lookupTables?.get(tableName);
+  if (!table) {
+    return `⟨lookup:${tableName}?⟩${sourceValue ? ` ${sourceValue}` : ""}`;
+  }
+  const key = sourceValue.trim();
+  return table[key] ?? sourceValue;
 }
 
 function applyFormula(name: string, value: string): string {

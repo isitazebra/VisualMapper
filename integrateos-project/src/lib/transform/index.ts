@@ -21,6 +21,9 @@ export interface TransformRequest {
   /** "(Base)" for plain base-rule preview, or a customer name to see
    * that customer's effective override set. */
   activeCustomer: string;
+  /** Optional lookup tables by name. When absent, `lookup` rules emit
+   * a "⟨lookup:NAME?⟩" placeholder so the user can see what's missing. */
+  lookupTables?: Map<string, Record<string, string>>;
 }
 
 export type TransformResult =
@@ -63,6 +66,7 @@ export function runTransform(req: TransformRequest): TransformResult {
       sourceDescriptor: req.source,
       extract,
       rulesByTargetId,
+      lookupTables: req.lookupTables,
     });
   } catch (err) {
     return {

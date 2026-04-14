@@ -26,6 +26,8 @@ export interface EmitParams {
   extract: ExtractResult;
   /** Effective rule per target leaf id (customer-aware). */
   rulesByTargetId: Map<string, FieldMap>;
+  /** Passed down into applyCtx so `lookup` rules can resolve. */
+  lookupTables?: Map<string, Record<string, string>>;
 }
 
 export function emitTarget(params: EmitParams): string {
@@ -71,6 +73,7 @@ function buildEmitCtx(params: EmitParams): EmitCtx {
   const iterCtxRef = { current: new Map<string, number>() };
   const applyCtx: ApplyContext = {
     counters: new Map(),
+    lookupTables: params.lookupTables,
     resolveSource: (sourceId: string) => {
       const arr = params.extract.values.get(sourceId);
       if (!arr) return undefined;
