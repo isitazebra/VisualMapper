@@ -43,9 +43,11 @@ at `/mapper` if you want to test UI changes before provisioning a DB.
 After the first successful deploy, visit `/` — you should see an empty
 partner list.
 
-### Seed example partners (optional)
+### Seed example partners + mappings (optional)
 
-To load the demo partners (AIT, UPS SCS, Kroger, Coyote) into production:
+To load the demo content (5 partners, 4 mapping specs with ~100
+field mappings + customer overrides, and sample payloads) into
+production:
 
 ```bash
 # Copy both URLs from Vercel Project Settings → Environment Variables
@@ -55,7 +57,13 @@ cd integrateos-project
 npm run db:seed
 ```
 
-You can also add partners via the UI — the seed is only for bootstrapping.
+The seed is idempotent — rerunning updates partners in place and
+wipes+re-seeds the child field mappings on each seeded spec. User-
+created mappings are left alone (seeded specs are tagged with
+`[seed:…]` in their name).
+
+You can also add partners + mappings via the UI — the seed is only
+for bootstrapping with realistic data.
 
 ## Local development
 
