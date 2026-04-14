@@ -1,16 +1,28 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getSchemaById } from "@/lib/schemas";
+import { prisma } from "@/lib/db";
+import { resolveSchema } from "@/lib/schemas/resolver";
+import { checkDb } from "@/lib/dbHealth";
+import { DbSetupBanner } from "@/components/common/DbSetupBanner";
 import type { SchemaNode } from "@/lib/types";
 
+export const dynamic = "force-dynamic";
+
 /**
- * Schema detail — renders a single schema's node tree so you can audit
- * what the mapper will show. Shown as a nested list; loops/groups are
- * highlighted by a small badge.
+ * Schema detail — works for both built-ins (via registry) and customs
+ * (via Prisma). Renders the full node tree for auditing.
  */
-export default function SchemaDetailPage({ params }: { params: { id: string } }) {
+export default async function SchemaDetailPage({ params }: { params: { id: string } }) {
   const id = decodeURIComponent(params.id);
-  const schema = getSchemaById(id);
+  // Built-ins don't need the DB; short-circuit the health check for them.
+  const needsDb = id.startsWith("custom:");
+
+  if (needsDb) {
+    const err = await checkDb();
+    if (err) return <DbSetupBanner error={err} />;
+  }
+
+  const schema = await resolveSchema(prisma, id);
   if (!schema) notFound();
 
   const topLevel = topLevelNodes(schema.nodes);
@@ -21,7 +33,7 @@ export default function SchemaDetailPage({ params }: { params: { id: string } })
         <Link href="/schemas" className="text-xs text-ink-mute hover:underline">
           ← Schemas
         </Link>
-        <div className="flex items-center gap-3 mt-3 mb-1">
+        <div className="flex items-center gap-3 mt-3 mb-1 flex-wrap">
           <h1 className="text-3xl font-bold">{schema.displayName}</h1>
           <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-brand-blue-soft text-brand-blue">
             {schema.format}
@@ -30,13 +42,11 @@ export default function SchemaDetailPage({ params }: { params: { id: string } })
             {schema.kind} · {schema.role}
           </span>
         </div>
-        <div className="text-sm text-ink-mute font-mono mb-2">{schema.id}</div>
+        <div className="text-sm text-ink-mute font-mono mb-2 break-all">{schema.id}</div>
         {schema.description && <p className="text-ink-soft mb-6">{schema.description}</p>}
 
         <section className="border border-border rounded bg-paper p-4">
-          <h2 className="text-sm font-bold mb-2">
-            Node tree ({schema.nodes.length} total)
-          </h2>
+          <h2 className="text-sm font-bold mb-2">Node tree ({schema.nodes.length} total)</h2>
           <ul className="text-sm font-mono">
             {topLevel.map((n) => (
               <NodeRow key={n.id} node={n} all={schema.nodes} depth={0} />

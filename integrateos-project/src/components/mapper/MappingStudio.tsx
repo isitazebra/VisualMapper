@@ -9,9 +9,8 @@ import {
   getSchemaById,
   getSourceSchema,
   getTargetSchema,
-  builtinSourceSchemaId,
-  builtinTargetSchemaId,
 } from "@/lib/schemas";
+import type { SchemaDescriptor } from "@/lib/schemas/registry";
 import type { HydratedMappingSpec } from "@/lib/mappingSpec";
 import { useDebouncedEffect } from "@/lib/useDebouncedEffect";
 import { MapperToolbar } from "./MapperToolbar";
@@ -21,12 +20,21 @@ import { RulePanel } from "./RulePanel";
 interface MappingStudioProps {
   /** If present, the studio loads this spec and autosaves changes. */
   initialSpec?: HydratedMappingSpec;
+  /** Pre-resolved source schema (built-in or custom). Required when
+   * initialSpec is set — the server page does the lookup. */
+  sourceDescriptor?: SchemaDescriptor;
+  /** Pre-resolved target schema. */
+  targetDescriptor?: SchemaDescriptor;
 }
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 
 /** Top-level mapping studio — orchestrates state and the three panels. */
-export function MappingStudio({ initialSpec }: MappingStudioProps) {
+export function MappingStudio({
+  initialSpec,
+  sourceDescriptor,
+  targetDescriptor,
+}: MappingStudioProps) {
   const [state, dispatch] = useReducer(
     mapperReducer,
     initialSpec ? stateFromSpec(initialSpec) : initialMapperState,
@@ -37,22 +45,25 @@ export function MappingStudio({ initialSpec }: MappingStudioProps) {
   // because `state` is a fresh reference, but nothing actually changed.
   const hasMounted = useRef(false);
 
-  // Prefer registry lookup via the stored schema ids (Phase 2.1). Fall
-  // back to the legacy tx/fmt resolution for the ephemeral /mapper route
-  // which has no persisted spec.
-  const sourceSchemaId =
-    initialSpec?.sourceSchemaId ?? builtinSourceSchemaId(state.tx);
-  const targetSchemaId =
-    initialSpec?.targetSchemaId ?? builtinTargetSchemaId(state.tx, state.fmt);
+  // Three lookup paths:
+  //  1. Persisted spec + server-resolved descriptors (the normal case) —
+  //     respect whatever the server returned, which covers both built-in
+  //     and custom schemas.
+  //  2. Persisted spec without descriptors (edge case, e.g. a custom
+  //     schema that was deleted) — best-effort registry lookup.
+  //  3. No spec — ephemeral /mapper route driven by the tx/ver/fmt pickers.
+  const sourceSchemaDesc = useMemo(() => {
+    if (sourceDescriptor) return sourceDescriptor;
+    if (initialSpec) return getSchemaById(initialSpec.sourceSchemaId);
+    return null;
+  }, [sourceDescriptor, initialSpec]);
 
-  const sourceSchemaDesc = useMemo(
-    () => getSchemaById(sourceSchemaId),
-    [sourceSchemaId],
-  );
-  const targetSchemaDesc = useMemo(
-    () => getSchemaById(targetSchemaId),
-    [targetSchemaId],
-  );
+  const targetSchemaDesc = useMemo(() => {
+    if (targetDescriptor) return targetDescriptor;
+    if (initialSpec) return getSchemaById(initialSpec.targetSchemaId);
+    return null;
+  }, [targetDescriptor, initialSpec]);
+
   const sourceSchema = useMemo(
     () => sourceSchemaDesc?.nodes ?? getSourceSchema(state.tx),
     [sourceSchemaDesc, state.tx],
