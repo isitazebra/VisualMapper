@@ -13,6 +13,8 @@ interface PreviewPanelProps {
   activeCustomer: string;
   sample: string;
   onSampleChange: (next: string) => void;
+  /** Lookup tables available to `lookup` rules (name → entries). */
+  lookupTables?: Record<string, Record<string, string>>;
 }
 
 /**
@@ -28,7 +30,13 @@ export function PreviewPanel({
   activeCustomer,
   sample,
   onSampleChange,
+  lookupTables,
 }: PreviewPanelProps) {
+  const lookupMap = useMemo(() => {
+    if (!lookupTables) return undefined;
+    return new Map(Object.entries(lookupTables));
+  }, [lookupTables]);
+
   const result = useMemo(() => {
     if (!sourceDescriptor || !targetDescriptor) {
       return {
@@ -48,8 +56,9 @@ export function PreviewPanel({
       maps,
       sample,
       activeCustomer,
+      lookupTables: lookupMap,
     });
-  }, [sourceDescriptor, targetDescriptor, maps, activeCustomer, sample]);
+  }, [sourceDescriptor, targetDescriptor, maps, activeCustomer, sample, lookupMap]);
 
   const sourceFormat = sourceDescriptor?.format ?? "json";
   const targetFormat = targetDescriptor?.format ?? "json";

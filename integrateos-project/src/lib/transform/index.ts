@@ -1,17 +1,17 @@
 /**
- * Top-level transform orchestrator. Parses the source, extracts values,
- * applies per-target rules, and emits the target payload.
+ * Top-level transform orchestrator. Parses the source, extracts loop-
+ * aware values, resolves the effective rule per target leaf, and emits
+ * the target payload.
  *
- * All-or-nothing: if parse fails we return the error; otherwise we
- * return the emitted string + a map of per-target-id evaluation notes
- * (e.g. which rule fired, which values were missing).
+ * "Effective rule" = the active customer's override for that target if
+ * one exists; otherwise the base rule.
  */
 import type { SchemaDescriptor } from "../schemas/registry";
 import type { FieldMap } from "../types";
 import { parseSource } from "./parse";
 import { extractSourceValues } from "./extract";
-import { applyRule, effectiveRule } from "./apply";
 import { emitTarget } from "./emit";
+import { effectiveRule } from "./apply";
 
 export interface TransformRequest {
   source: SchemaDescriptor;
@@ -21,6 +21,9 @@ export interface TransformRequest {
   /** "(Base)" for plain base-rule preview, or a customer name to see
    * that customer's effective override set. */
   activeCustomer: string;
+  /** Optional lookup tables by name. When absent, `lookup` rules emit
+   * a "⟨lookup:NAME?⟩" placeholder so the user can see what's missing. */
+  lookupTables?: Map<string, Record<string, string>>;
 }
 
 export type TransformResult =
@@ -28,7 +31,6 @@ export type TransformResult =
   | { ok: false; error: string };
 
 export function runTransform(req: TransformRequest): TransformResult {
-  // 1. Parse source
   let parsed;
   try {
     parsed = parseSource(req.source.format, req.sample);
@@ -39,32 +41,33 @@ export function runTransform(req: TransformRequest): TransformResult {
     };
   }
 
-  // 2. Extract values for every source leaf
-  const sourceValues = extractSourceValues(req.source, parsed);
+  const extract = extractSourceValues(req.source, parsed);
 
-  // 3. Apply rules per target leaf
-  const targetValues = new Map<string, string | undefined>();
-  const ctx = { counters: new Map<string, number>() };
+  // Resolve the effective rule for every target leaf once up front so
+  // the emitter doesn't redo this lookup per-iteration.
+  const rulesByTargetId = new Map<string, FieldMap>();
   let mapped = 0;
   let unmapped = 0;
-
   for (const node of req.target.nodes) {
     if (node.type !== "el") continue;
     const rule = effectiveRule(node.id, req.maps, req.activeCustomer);
-    if (!rule) {
+    if (rule) {
+      rulesByTargetId.set(node.id, rule);
+      mapped++;
+    } else {
       unmapped++;
-      continue;
     }
-    const sourceValue = sourceValues.get(rule.sid);
-    const result = applyRule(rule, sourceValue, ctx);
-    targetValues.set(node.id, result);
-    mapped++;
   }
 
-  // 4. Emit target payload
   let output: string;
   try {
-    output = emitTarget(req.target, targetValues);
+    output = emitTarget({
+      targetDescriptor: req.target,
+      sourceDescriptor: req.source,
+      extract,
+      rulesByTargetId,
+      lookupTables: req.lookupTables,
+    });
   } catch (err) {
     return {
       ok: false,
@@ -76,3 +79,4 @@ export function runTransform(req: TransformRequest): TransformResult {
 }
 
 export type { ParsedSource } from "./parse";
+export type { ExtractResult } from "./extract";

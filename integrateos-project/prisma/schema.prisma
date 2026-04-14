@@ -52,6 +52,27 @@ model Partner {
 
   mappings MappingSpec[]
   schemas  Schema[]
+  lookups  LookupTable[]
+}
+
+// ─── Lookup table for the `lookup` rule type ───
+// Partner-scoped when partnerId is set, global when null. Entries is a
+// JSONB object mapping string keys to string values (e.g. UOM code
+// translations, status-code taxonomies, country-code conversions when
+// the built-in formulas aren't enough).
+model LookupTable {
+  id          String   @id @default(cuid())
+  partnerId   String?
+  partner     Partner? @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  entries     Json
+  createdBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([partnerId])
+  @@index([name])
 }
 
 // ─── A mapping spec (one transaction type × direction for a partner) ───
