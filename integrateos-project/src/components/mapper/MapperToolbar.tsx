@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { type Dispatch } from "react";
 import type { EdiVersion, MapperAction, MapperState, TargetFormat, TxType } from "@/lib/types";
 import { COLORS, FONT_MONO } from "@/lib/rules";
@@ -9,10 +10,28 @@ interface MapperToolbarProps {
   state: MapperState;
   dispatch: Dispatch<MapperAction>;
   stats: { total: number; ok: number; overrides: number };
+  /** When true, tx/version/format are locked (already persisted). */
+  persisted?: boolean;
+  /** "idle" | "saving" | "saved" | "error" — shown when persisted. */
+  saveStatus?: "idle" | "saving" | "saved" | "error";
+  saveError?: string | null;
+  /** Mapping-spec name, shown when persisted. */
+  specName?: string;
+  /** Partner id so we can render a back link. */
+  partnerId?: string;
 }
 
 /** Top app bar — logo, transaction/version/format pickers, stats, auto-map. */
-export function MapperToolbar({ state, dispatch, stats }: MapperToolbarProps) {
+export function MapperToolbar({
+  state,
+  dispatch,
+  stats,
+  persisted,
+  saveStatus,
+  saveError,
+  specName,
+  partnerId,
+}: MapperToolbarProps) {
   return (
     <div
       style={{
@@ -28,6 +47,15 @@ export function MapperToolbar({ state, dispatch, stats }: MapperToolbarProps) {
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+        {partnerId && (
+          <Link
+            href={`/workspace/${partnerId}`}
+            style={{ fontSize: 9, color: COLORS.t3, textDecoration: "none" }}
+            title="Back to workspace"
+          >
+            ←
+          </Link>
+        )}
         <div
           style={{
             width: 6,
@@ -38,10 +66,15 @@ export function MapperToolbar({ state, dispatch, stats }: MapperToolbarProps) {
           }}
         />
         <span style={{ fontSize: 12, fontWeight: 800 }}>IntegrateOS</span>
+        {specName && (
+          <span style={{ fontSize: 10, color: COLORS.t2, marginLeft: 4 }}>· {specName}</span>
+        )}
 
         <select
           value={state.tx}
           onChange={(e) => dispatch({ type: "TX", v: e.target.value as TxType })}
+          disabled={persisted}
+          title={persisted ? "Create a new mapping spec to change the transaction type" : undefined}
           style={{
             padding: "2px 4px",
             borderRadius: 3,
@@ -49,8 +82,9 @@ export function MapperToolbar({ state, dispatch, stats }: MapperToolbarProps) {
             fontSize: 9,
             fontWeight: 700,
             background: COLORS.blueSoft,
-            cursor: "pointer",
+            cursor: persisted ? "not-allowed" : "pointer",
             color: COLORS.blue,
+            opacity: persisted ? 0.7 : 1,
           }}
         >
           <optgroup label="Tendering">
@@ -96,6 +130,8 @@ export function MapperToolbar({ state, dispatch, stats }: MapperToolbarProps) {
         <select
           value={state.fmt}
           onChange={(e) => dispatch({ type: "FMT", v: e.target.value as TargetFormat })}
+          disabled={persisted}
+          title={persisted ? "Create a new mapping spec to change the target format" : undefined}
           style={{
             padding: "2px 3px",
             borderRadius: 3,
@@ -103,8 +139,9 @@ export function MapperToolbar({ state, dispatch, stats }: MapperToolbarProps) {
             fontSize: 8,
             fontWeight: 600,
             background: COLORS.purpleSoft,
-            cursor: "pointer",
+            cursor: persisted ? "not-allowed" : "pointer",
             color: COLORS.purple,
+            opacity: persisted ? 0.7 : 1,
           }}
         >
           {(Object.entries(FMT_LABELS) as [TargetFormat, string][]).map(([k, v]) => (
@@ -116,6 +153,9 @@ export function MapperToolbar({ state, dispatch, stats }: MapperToolbarProps) {
       </div>
 
       <div style={{ display: "flex", gap: 3, alignItems: "center" }}>
+        {persisted && saveStatus && (
+          <SaveIndicator status={saveStatus} error={saveError ?? null} />
+        )}
         <select
           value={state.cust}
           onChange={(e) => dispatch({ type: "CUST", v: e.target.value })}
@@ -154,5 +194,35 @@ export function MapperToolbar({ state, dispatch, stats }: MapperToolbarProps) {
         </button>
       </div>
     </div>
+  );
+}
+
+function SaveIndicator({
+  status,
+  error,
+}: {
+  status: "idle" | "saving" | "saved" | "error";
+  error: string | null;
+}) {
+  const map = {
+    idle: { color: COLORS.t3, label: "—" },
+    saving: { color: COLORS.amber, label: "Saving…" },
+    saved: { color: COLORS.green, label: "✓ Saved" },
+    error: { color: COLORS.red, label: "⚠ Error" },
+  } as const;
+  const { color, label } = map[status];
+  return (
+    <span
+      title={error ?? undefined}
+      style={{
+        fontSize: 8,
+        fontFamily: FONT_MONO,
+        fontWeight: 600,
+        color,
+        padding: "0 5px",
+      }}
+    >
+      {label}
+    </span>
   );
 }
