@@ -2,7 +2,7 @@
 
 import { type Dispatch } from "react";
 import type { MapperAction, MapperState, RuleTypeId, SchemaNode } from "@/lib/types";
-import { RULE_TYPES, COLORS, ruleNeedsValue } from "@/lib/rules";
+import { RULE_TYPES, COLORS, FONT_MONO, FONT_SANS, ruleNeedsValue } from "@/lib/rules";
 import { OverrideStack } from "./OverrideStack";
 
 interface RulePanelProps {
@@ -107,7 +107,7 @@ export function RulePanel({ state, dispatch, sourceSchema, targetSchema }: RuleP
                   borderRadius: 3,
                   border: `1px solid ${COLORS.border}`,
                   fontSize: 8,
-                  fontFamily: "'Fira Code', monospace",
+                  fontFamily: FONT_MONO,
                   outline: "none",
                   background: COLORS.white,
                 }}
@@ -181,7 +181,7 @@ export function RulePanel({ state, dispatch, sourceSchema, targetSchema }: RuleP
             borderRadius: 3,
             border: `1px solid ${COLORS.border}`,
             fontSize: 7,
-            fontFamily: "Karla, sans-serif",
+            fontFamily: FONT_SANS,
             resize: "vertical",
             outline: "none",
             boxSizing: "border-box",
@@ -202,7 +202,7 @@ export function RulePanel({ state, dispatch, sourceSchema, targetSchema }: RuleP
         <div
           style={{
             fontSize: 7,
-            fontFamily: "'Fira Code', monospace",
+            fontFamily: FONT_MONO,
             color: COLORS.tx,
             background: COLORS.white,
             padding: 3,

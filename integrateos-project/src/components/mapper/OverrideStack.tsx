@@ -2,7 +2,7 @@
 
 import { type Dispatch, useState } from "react";
 import type { FieldMap, MapperAction, RuleTypeId } from "@/lib/types";
-import { RULE_TYPES, COLORS, ruleNeedsValue } from "@/lib/rules";
+import { RULE_TYPES, COLORS, FONT_MONO, ruleNeedsValue } from "@/lib/rules";
 import { CUSTOMERS } from "@/lib/schemas";
 
 interface OverrideStackProps {
@@ -98,7 +98,7 @@ export function OverrideStack({ baseMap, overrides, selMap, dispatch }: Override
                   borderRadius: 2,
                   border: `1px solid ${COLORS.border}`,
                   fontSize: 7,
-                  fontFamily: "'Fira Code', monospace",
+                  fontFamily: FONT_MONO,
                   outline: "none",
                   background: COLORS.white,
                 }}

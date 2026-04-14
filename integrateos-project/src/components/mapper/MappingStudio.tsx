@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useReducer } from "react";
-import { COLORS } from "@/lib/rules";
+import { COLORS, FONT_SANS } from "@/lib/rules";
 import { initialMapperState, mapperReducer } from "@/lib/mapperState";
 import { getSourceSchema, getTargetSchema, TX_LABELS, FMT_LABELS } from "@/lib/schemas";
 import { MapperToolbar } from "./MapperToolbar";
@@ -31,7 +31,7 @@ export function MappingStudio() {
         flexDirection: "column",
         height: "100vh",
         background: COLORS.bg,
-        fontFamily: "Karla, sans-serif",
+        fontFamily: FONT_SANS,
         color: COLORS.tx,
       }}
     >

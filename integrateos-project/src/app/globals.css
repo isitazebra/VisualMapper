@@ -15,6 +15,12 @@ body {
   font-family: "Karla", ui-sans-serif, system-ui, sans-serif;
 }
 
+code,
+pre,
+.font-mono {
+  font-family: "Fira Code", ui-monospace, monospace;
+}
+
 input::placeholder,
 textarea::placeholder {
   color: #999189;

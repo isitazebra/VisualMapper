@@ -1,8 +1,7 @@
 "use client";
 
 import { type Dispatch } from "react";
-import { COLORS } from "@/lib/rules";
-import { RULE_TYPES } from "@/lib/rules";
+import { COLORS, FONT_MONO, RULE_TYPES } from "@/lib/rules";
 import type { MapperAction, MapperState, SchemaNode } from "@/lib/types";
 
 interface TreeRowProps {
@@ -156,7 +155,7 @@ export function TreeRow({ node, side, state, dispatch, targetSchema }: TreeRowPr
                 borderRadius: 2,
                 background: COLORS.amberSoft,
                 color: COLORS.amber,
-                fontFamily: "'Fira Code', monospace",
+                fontFamily: FONT_MONO,
                 flexShrink: 0,
                 lineHeight: "12px",
               }}
@@ -173,7 +172,7 @@ export function TreeRow({ node, side, state, dispatch, targetSchema }: TreeRowPr
                 borderRadius: 2,
                 background: COLORS.blueSoft,
                 color: COLORS.blue,
-                fontFamily: "'Fira Code', monospace",
+                fontFamily: FONT_MONO,
                 flexShrink: 0,
                 lineHeight: "12px",
               }}
@@ -185,7 +184,7 @@ export function TreeRow({ node, side, state, dispatch, targetSchema }: TreeRowPr
           <span
             style={{
               fontSize: 9.5,
-              fontFamily: "'Fira Code', monospace",
+              fontFamily: FONT_MONO,
               fontWeight: 600,
               color: isLp ? COLORS.amber : isGr ? COLORS.blue : COLORS.tx,
               overflow: "hidden",
@@ -205,7 +204,7 @@ export function TreeRow({ node, side, state, dispatch, targetSchema }: TreeRowPr
                 borderRadius: 8,
                 background: COLORS.orangeSoft,
                 color: COLORS.orange,
-                fontFamily: "'Fira Code', monospace",
+                fontFamily: FONT_MONO,
                 flexShrink: 0,
               }}
             >
@@ -244,7 +243,7 @@ export function TreeRow({ node, side, state, dispatch, targetSchema }: TreeRowPr
               <span
                 style={{
                   fontSize: 8,
-                  fontFamily: "'Fira Code', monospace",
+                  fontFamily: FONT_MONO,
                   color: COLORS.t3,
                   whiteSpace: "nowrap",
                   overflow: "hidden",
@@ -279,7 +278,7 @@ export function TreeRow({ node, side, state, dispatch, targetSchema }: TreeRowPr
           </span>
           <span
             style={{
-              fontFamily: "'Fira Code', monospace",
+              fontFamily: FONT_MONO,
               color: COLORS.purple,
               fontWeight: 600,
               maxWidth: 100,

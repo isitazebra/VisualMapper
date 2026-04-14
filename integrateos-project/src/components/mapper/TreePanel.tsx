@@ -3,7 +3,7 @@
 import { type Dispatch, useMemo } from "react";
 import type { MapperAction, MapperState, SchemaNode } from "@/lib/types";
 import { isVisible } from "@/lib/mapperState";
-import { COLORS } from "@/lib/rules";
+import { COLORS, FONT_MONO } from "@/lib/rules";
 import { TreeRow } from "./TreeRow";
 
 interface TreePanelProps {
@@ -75,7 +75,7 @@ export function TreePanel({
             borderRadius: 2,
             background: badgeBg,
             color: badgeFg,
-            fontFamily: "'Fira Code', monospace",
+            fontFamily: FONT_MONO,
           }}
         >
           {header.badge}

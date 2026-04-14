@@ -2,7 +2,9 @@
 // See CLAUDE.md for domain context
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // "native" for local dev, "rhel-openssl-3.0.x" for Vercel's Node 20 runtime.
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {

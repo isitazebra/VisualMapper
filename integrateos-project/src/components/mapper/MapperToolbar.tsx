@@ -2,7 +2,7 @@
 
 import { type Dispatch } from "react";
 import type { EdiVersion, MapperAction, MapperState, TargetFormat, TxType } from "@/lib/types";
-import { COLORS } from "@/lib/rules";
+import { COLORS, FONT_MONO } from "@/lib/rules";
 import { CUSTOMERS, EDI_VERSIONS, FMT_LABELS } from "@/lib/schemas";
 
 interface MapperToolbarProps {
@@ -83,7 +83,7 @@ export function MapperToolbar({ state, dispatch, stats }: MapperToolbarProps) {
             fontSize: 8,
             background: COLORS.white,
             cursor: "pointer",
-            fontFamily: "'Fira Code', monospace",
+            fontFamily: FONT_MONO,
           }}
         >
           {EDI_VERSIONS.map((v) => (
@@ -134,7 +134,7 @@ export function MapperToolbar({ state, dispatch, stats }: MapperToolbarProps) {
             </option>
           ))}
         </select>
-        <span style={{ fontSize: 7, fontFamily: "'Fira Code', monospace", color: COLORS.t3 }}>
+        <span style={{ fontSize: 7, fontFamily: FONT_MONO, color: COLORS.t3 }}>
           {stats.ok}/{stats.total} · {stats.overrides}ovr
         </span>
         <button
