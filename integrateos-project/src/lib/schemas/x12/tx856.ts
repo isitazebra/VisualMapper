@@ -1,0 +1,47 @@
+import { node as N } from "../node";
+import type { SchemaNode } from "../../types";
+
+/** X12 856 Advance Ship Notice (ASN) — nested HL loops. */
+export const TX_856_SOURCE: SchemaNode[] = [
+  N("bsn", "BSN", "Ship Notice Header", 0, "group", { kids: ["bsn1", "bsn2", "bsn3", "bsn4"] }),
+  N("bsn1", "BSN*01", "Purpose Code", 1, "el", { sample: "00" }),
+  N("bsn2", "BSN*02", "Shipment ID", 1, "el", { sample: "SHP-99841" }),
+  N("bsn3", "BSN*03", "Ship Date", 1, "el", { sample: "20240318" }),
+  N("bsn4", "BSN*04", "Ship Time", 1, "el", { sample: "1430" }),
+  N("hls", "HL (S)", "Shipment Level", 0, "loop", {
+    max: "1",
+    kids: ["td102", "td503", "td504", "td303", "refbol", "dtms", "dtmd", "n1sf", "n1st"],
+  }),
+  N("td102", "TD1*02", "# Pallets", 1, "el", { sample: "12" }),
+  N("td503", "TD5*03", "Carrier SCAC", 1, "el", { sample: "ODFL" }),
+  N("td504", "TD5*04", "Transport Mode", 1, "el", { sample: "M" }),
+  N("td303", "TD3*03", "Trailer #", 1, "el", { sample: "ODFL-44872" }),
+  N("refbol", "REF*BM", "BOL #", 1, "el", { sample: "BOL-887421" }),
+  N("dtms", "DTM*011", "Shipped Date", 1, "el", { sample: "20240318" }),
+  N("dtmd", "DTM*017", "Est Delivery", 1, "el", { sample: "20240320" }),
+  N("n1sf", "N1*SF", "Ship From Name", 1, "el", { sample: "AIT Dallas DC" }),
+  N("n1st", "N1*ST", "Ship To Name", 1, "el", { sample: "Kroger DC #847" }),
+  N("hlo", "HL (O)", "Order Level", 0, "loop", { max: "999", kids: ["prf1", "prf4"] }),
+  N("prf1", "PRF*01", "PO Number", 1, "el", { sample: "PO-88712" }),
+  N("prf4", "PRF*04", "PO Date", 1, "el", { sample: "20240310" }),
+  N("hlt", "HL (T)", "Tare / Pallet", 0, "loop", { max: "9999", kids: ["mansst", "po4c", "po4w"] }),
+  N("mansst", "MAN*GM (T)", "SSCC-18 Pallet", 1, "el", { sample: "00300712345600001234" }),
+  N("po4c", "PO4*01 (T)", "Cases/Pallet", 1, "el", { sample: "48" }),
+  N("po4w", "PO4*08 (T)", "Pallet Weight", 1, "el", { sample: "1842.5" }),
+  N("hlp", "HL (P)", "Pack / Case", 0, "loop", { max: "9999", kids: ["manssp", "sn1qp"] }),
+  N("manssp", "MAN*GM (P)", "SSCC-18 Case", 1, "el", { sample: "00300712345600005678" }),
+  N("sn1qp", "SN1*02 (P)", "Qty (Case)", 1, "el", { sample: "48" }),
+  N("hli", "HL (I)", "Item Level", 0, "loop", {
+    max: "9999",
+    kids: ["liupc", "ligtin", "lisku", "sn1q", "sn1u", "pidesc", "meawt", "rflot", "rfexp"],
+  }),
+  N("liupc", "LIN*UP", "UPC-12", 1, "el", { sample: "012345678905" }),
+  N("ligtin", "LIN*EN", "GTIN-14", 1, "el", { sample: "10012345678902" }),
+  N("lisku", "LIN*IN", "Buyer Item #", 1, "el", { sample: "KRG-44521" }),
+  N("sn1q", "SN1*02", "Qty Shipped", 1, "el", { sample: "576" }),
+  N("sn1u", "SN1*03", "UOM", 1, "el", { sample: "EA" }),
+  N("pidesc", "PID*F*08", "Description", 1, "el", { sample: "Organic Wheat Bread" }),
+  N("meawt", "MEA*PD*WT", "Catch Weight", 1, "el", { sample: "1.65" }),
+  N("rflot", "REF*LT", "Lot #", 1, "el", { sample: "LOT-2024-A117" }),
+  N("rfexp", "REF*EXP", "Expiry Date", 1, "el", { sample: "20241215" }),
+];

@@ -1,0 +1,51 @@
+import { node as N } from "../node";
+import type { SchemaNode } from "../../types";
+
+/** X12 210 Motor Carrier Freight Invoice. */
+export const TX_210_SOURCE: SchemaNode[] = [
+  N("b3", "B3", "Invoice Beginning", 0, "group", {
+    kids: ["b302", "b303", "b304", "b305", "b306", "b307", "b309", "b310", "b311", "b312"],
+  }),
+  N("b302", "B3*02", "Invoice #", 1, "el", { sample: "3262611601" }),
+  N("b303", "B3*03", "Shipment ID", 1, "el", { sample: "769933" }),
+  N("b304", "B3*04", "Payment Method", 1, "el", { sample: "CC" }),
+  N("b305", "B3*05", "Weight Unit", 1, "el", { sample: "" }),
+  N("b306", "B3*06", "Invoice Date", 1, "el", { sample: "20250602" }),
+  N("b307", "B3*07", "Net Amount Due", 1, "el", { sample: "157408" }),
+  N("b309", "B3*09", "Delivery Date", 1, "el", { sample: "20250119" }),
+  N("b310", "B3*10", "Date Variation", 1, "el", { sample: "035" }),
+  N("b311", "B3*11", "SCAC", 1, "el", { sample: "CLLQ" }),
+  N("b312", "B3*12", "Payment Due Date", 1, "el", { sample: "20250702" }),
+  N("c3g", "C3", "Currency", 0, "group", { kids: ["c301"] }),
+  N("c301", "C3*01", "Currency Code", 1, "el", { sample: "USD" }),
+  N("n92", "N9 Loop", "References", 0, "loop", { max: "99", kids: ["n9201", "n9202"] }),
+  N("n9201", "N9*01", "Ref Qualifier", 1, "el", { sample: "PO" }),
+  N("n9202", "N9*02", "Ref ID", 1, "el", { sample: "769933" }),
+  N("n12", "N1 Loop", "Parties", 0, "loop", {
+    max: "5",
+    kids: ["n1201", "n1202", "n3201", "n4201", "n4202", "n4203"],
+  }),
+  N("n1201", "N1*01", "Entity Code", 1, "el", { sample: "SH" }),
+  N("n1202", "N1*02", "Name", 1, "el", { sample: "ELYRIA CENTRAL" }),
+  N("n3201", "N3*01", "Address", 1, "el", { sample: "800 LOGISTICS DR" }),
+  N("n4201", "N4*01", "City", 1, "el", { sample: "ELYRIA" }),
+  N("n4202", "N4*02", "State", 1, "el", { sample: "OH" }),
+  N("n4203", "N4*03", "Zip", 1, "el", { sample: "44035" }),
+  N("lxl", "LX Loop", "Line Items", 0, "loop", {
+    max: "999",
+    kids: ["lx201", "l501", "l502", "l002", "l008", "l101", "l103", "l104", "l108"],
+  }),
+  N("lx201", "LX*01", "Line #", 1, "el", { sample: "1" }),
+  N("l501", "L5*01", "Lading Line #", 1, "el", { sample: "1" }),
+  N("l502", "L5*02", "Description", 1, "el", { sample: "FAK" }),
+  N("l002", "L0*02", "Billed Weight", 1, "el", { sample: "42500" }),
+  N("l008", "L0*08", "Lading Qty", 1, "el", { sample: "24" }),
+  N("l101", "L1*01", "Item #", 1, "el", { sample: "1" }),
+  N("l103", "L1*03", "Rate", 1, "el", { sample: "450" }),
+  N("l104", "L1*04", "Charge", 1, "el", { sample: "1250.00" }),
+  N("l108", "L1*08", "Charge Code", 1, "el", { sample: "400" }),
+  N("l3t", "L3", "Totals", 0, "group", { kids: ["l3t01", "l3t02", "l3t05"] }),
+  N("l3t01", "L3*01", "Total Weight", 1, "el", { sample: "42500" }),
+  N("l3t02", "L3*02", "Total Freight", 1, "el", { sample: "1250.00" }),
+  N("l3t05", "L3*05", "Amount Due", 1, "el", { sample: "1562.50" }),
+];
