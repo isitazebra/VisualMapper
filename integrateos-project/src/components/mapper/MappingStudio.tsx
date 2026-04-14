@@ -148,6 +148,7 @@ export function MappingStudio({
         saveError={saveError}
         specName={initialSpec?.name}
         partnerId={initialSpec?.partnerId}
+        mappingId={initialSpec?.id}
       />
 
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>

@@ -19,6 +19,9 @@ interface MapperToolbarProps {
   specName?: string;
   /** Partner id so we can render a back link. */
   partnerId?: string;
+  /** Mapping spec id — when present we show a "Review" link that opens
+   * the plain-English review page in a new tab. */
+  mappingId?: string;
 }
 
 /** Top app bar — logo, transaction/version/format pickers, stats, auto-map. */
@@ -31,6 +34,7 @@ export function MapperToolbar({
   saveError,
   specName,
   partnerId,
+  mappingId,
 }: MapperToolbarProps) {
   return (
     <div
@@ -155,6 +159,25 @@ export function MapperToolbar({
       <div style={{ display: "flex", gap: 3, alignItems: "center" }}>
         {persisted && saveStatus && (
           <SaveIndicator status={saveStatus} error={saveError ?? null} />
+        )}
+        {partnerId && mappingId && (
+          <Link
+            href={`/workspace/${partnerId}/mapping/${mappingId}/review`}
+            target="_blank"
+            style={{
+              fontSize: 8,
+              padding: "1px 5px",
+              borderRadius: 3,
+              border: `1px solid ${COLORS.border}`,
+              background: COLORS.white,
+              color: COLORS.t2,
+              textDecoration: "none",
+              fontWeight: 600,
+            }}
+            title="Open plain-English review of all rules in a new tab"
+          >
+            📄 Review
+          </Link>
         )}
         <select
           value={state.cust}
