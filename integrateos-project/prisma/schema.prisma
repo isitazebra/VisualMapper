@@ -37,10 +37,18 @@ model MappingSpec {
   partnerId    String
   partner      Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
   name         String
+  // Legacy shape — still written on create for built-in X12 mappings.
+  // Phase 2.2 will make these nullable once custom schemas land.
   txType       String  // "204" | "214" | "210" | "990" | "850" | "855" | "856" | "810"
   ediVersion   String  // "3040" | "4010" | "4030" | "5010"
-  sourceFormat String  // "x12" (typically)
-  targetFormat String  // "xml" | "json" | "otm_xml" | "csv"
+  sourceFormat String  // "x12" | "json" | "xml" | "csv" | ...
+  targetFormat String  // "xml" | "json" | "otm_xml" | "csv" | ...
+  // Schema registry references. Built-in ids look like "x12:204" / "xml:850"
+  // / "json:default"; custom ids look like "custom:<cuid>" once Phase 2.2
+  // ships. Nullable while the codebase transitions — existing rows are
+  // backfilled by 1_add_schema_ids migration.
+  sourceSchemaId String?
+  targetSchemaId String?
   direction    String  @default("inbound") // inbound | outbound
   status       String  @default("draft") // draft | review | confirmed | live
   createdAt    DateTime @default(now())
@@ -53,6 +61,8 @@ model MappingSpec {
 
   @@index([partnerId])
   @@index([txType, ediVersion])
+  @@index([sourceSchemaId])
+  @@index([targetSchemaId])
 }
 
 // ─── Individual source-to-target field mapping (the base rule) ───

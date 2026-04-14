@@ -71,7 +71,10 @@ export default async function LandingPage() {
           <NewPartnerForm />
         </section>
 
-        <p className="mt-10 text-xs text-ink-mute">
+        <p className="mt-10 text-xs text-ink-mute flex gap-4">
+          <Link href="/schemas" className="underline">
+            Browse schemas →
+          </Link>
           <Link href="/mapper" className="underline">
             Open mapper without persistence →
           </Link>
