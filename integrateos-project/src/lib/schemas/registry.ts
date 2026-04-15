@@ -16,7 +16,7 @@ import { OTM_TARGET_DEFAULT } from "./targets/otm";
 import { CSV_TARGET_DEFAULT } from "./targets/csv";
 
 /** The wire formats the registry currently understands. */
-export type SchemaFormat = "x12" | "xml" | "json" | "otm_xml" | "csv";
+export type SchemaFormat = "x12" | "edifact" | "xml" | "json" | "otm_xml" | "csv";
 
 /**
  * Top-level schema descriptor. A MappingSpec references two of these via

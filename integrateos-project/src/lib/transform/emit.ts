@@ -35,10 +35,17 @@ export function emitTarget(params: EmitParams): string {
     case "csv":
       return emitCsv(ctx);
     case "x12":
-      return emitX12(ctx);
+      return emitX12(ctx, { elSep: "*", segSep: "~" });
+    case "edifact":
+      return emitX12(ctx, { elSep: "+", segSep: "'" });
     default:
       return emitJson(ctx);
   }
+}
+
+interface EdiDelims {
+  elSep: string;
+  segSep: string;
 }
 
 type LoopStack = Array<{ loopId: string; iterNode: IterationNode; iterIdx: number }>;
@@ -322,20 +329,25 @@ function csvCell(v: string): string {
  * so output looks like `B2*02*CLNL*04*LD23029450` rather than
  * `B2**CLNL**LD23029450**`.
  */
-function emitX12(ctx: EmitCtx): string {
+function emitX12(ctx: EmitCtx, delims: EdiDelims): string {
   const out: string[] = [];
   const tops = topLevelNodes(ctx.targetDescriptor.nodes);
-  emitX12Walk(tops, out, ctx);
-  return out.join("~\n") + (out.length > 0 ? "~" : "");
+  emitX12Walk(tops, out, ctx, delims);
+  return out.join(delims.segSep + "\n") + (out.length > 0 ? delims.segSep : "");
 }
 
-function emitX12Walk(nodes: SchemaNode[], out: string[], ctx: EmitCtx): void {
+function emitX12Walk(
+  nodes: SchemaNode[],
+  out: string[],
+  ctx: EmitCtx,
+  delims: EdiDelims,
+): void {
   let pendingTag: string | null = null;
   let pendingLeaves: SchemaNode[] = [];
 
   const flush = () => {
     if (pendingTag && pendingLeaves.length > 0) {
-      emitX12Segment(pendingTag, pendingLeaves, out, ctx);
+      emitX12Segment(pendingTag, pendingLeaves, out, ctx, delims);
     }
     pendingTag = null;
     pendingLeaves = [];
@@ -355,7 +367,7 @@ function emitX12Walk(nodes: SchemaNode[], out: string[], ctx: EmitCtx): void {
       const kids = (node.kids ?? [])
         .map((id) => ctx.targetById.get(id))
         .filter((n): n is SchemaNode => !!n);
-      emitX12Walk(kids, out, ctx);
+      emitX12Walk(kids, out, ctx, delims);
       flush();
       continue;
     }
@@ -368,7 +380,7 @@ function emitX12Walk(nodes: SchemaNode[], out: string[], ctx: EmitCtx): void {
         .filter((n): n is SchemaNode => !!n);
       for (let i = 0; i < iters.length; i++) {
         if (driverLoop) ctx.stack.push({ loopId: driverLoop, iterNode: iters[i], iterIdx: i });
-        emitX12Walk(kids, out, ctx);
+        emitX12Walk(kids, out, ctx, delims);
         if (driverLoop) ctx.stack.pop();
       }
     }
@@ -381,6 +393,7 @@ function emitX12Segment(
   leaves: SchemaNode[],
   out: string[],
   ctx: EmitCtx,
+  delims: EdiDelims,
 ): void {
   const parts: string[] = [tag];
   for (const leaf of leaves) {
@@ -396,12 +409,9 @@ function emitX12Segment(
     while (parts.length <= position) parts.push("");
     parts[position] = value ?? "";
   }
-  // Trim trailing empty elements — standard X12 stops at the last
-  // non-empty element rather than padding.
   while (parts.length > 1 && parts[parts.length - 1] === "") parts.pop();
-  // Skip empty segments entirely — no point emitting a "B2" with no data.
   if (parts.length <= 1) return;
-  out.push(parts.join("*"));
+  out.push(parts.join(delims.elSep));
 }
 
 function parseX12Seg(seg: string): { tag: string; elIdx: number } | null {

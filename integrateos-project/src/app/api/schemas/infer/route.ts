@@ -2,7 +2,14 @@ import { NextResponse } from "next/server";
 import { inferSchemaFromSample } from "@/lib/infer";
 import type { SchemaFormat } from "@/lib/schemas/registry";
 
-const SUPPORTED_FORMATS: readonly SchemaFormat[] = ["json", "xml", "otm_xml", "csv", "x12"];
+const SUPPORTED_FORMATS: readonly SchemaFormat[] = [
+  "json",
+  "xml",
+  "otm_xml",
+  "csv",
+  "x12",
+  "edifact",
+];
 
 /**
  * POST /api/schemas/infer — sample → SchemaNode[] preview.

@@ -69,6 +69,11 @@ export function extractSourceValues(
       walkCsv(descriptor.nodes, parsed.value, result.rootLeaves);
       break;
     case "x12":
+    case "edifact":
+      // EDIFACT shares structure with X12 — same tagged-segment model
+      // with elements at positional offsets. Extract logic is
+      // identical; only the wire-level parsing differs (handled in
+      // parseSource).
       walkX12(descriptor.nodes, parsed.value, result, byId);
       break;
   }

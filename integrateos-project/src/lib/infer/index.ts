@@ -4,6 +4,7 @@ import { inferJsonSchema } from "./json";
 import { inferXmlSchema } from "./xml";
 import { inferCsvSchema } from "./csv";
 import { inferX12Schema } from "./x12";
+import { inferEdifactSchema } from "./edifact";
 
 /**
  * Unified sample → schema inference. Given a raw sample string and a
@@ -23,6 +24,8 @@ export function inferSchemaFromSample(format: SchemaFormat, sample: string): Sch
       return inferCsvSchema(sample);
     case "x12":
       return inferX12Schema(sample);
+    case "edifact":
+      return inferEdifactSchema(sample);
     default:
       throw new Error(`Unsupported format: ${format}`);
   }
