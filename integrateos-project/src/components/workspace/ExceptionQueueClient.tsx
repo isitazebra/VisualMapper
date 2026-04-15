@@ -103,7 +103,7 @@ export function ExceptionQueueClient({ rows }: Props) {
   if (rows.length === 0) {
     return (
       <div className="text-sm text-ink-mute p-6 border border-dashed border-border rounded text-center">
-        🎉 No unresolved exceptions. Everything's flowing.
+        🎉 No unresolved exceptions. Everything&apos;s flowing.
       </div>
     );
   }

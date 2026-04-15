@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 interface PartnerOption {
   id: string;
@@ -42,12 +42,14 @@ export function NewEndpointForm({
     [mappings, partnerId],
   );
   const [mappingSpecId, setMappingSpecId] = useState(partnerMappings[0]?.id ?? "");
-  // Keep mapping selection in sync when partner changes.
-  useMemo(() => {
+  // Keep mapping selection in sync when partner changes. useEffect is
+  // the right hook for side-effects like state resets; useMemo here
+  // was misuse and flagged by react-hooks/exhaustive-deps.
+  useEffect(() => {
     if (!partnerMappings.find((m) => m.id === mappingSpecId)) {
       setMappingSpecId(partnerMappings[0]?.id ?? "");
     }
-  }, [partnerId, partnerMappings, mappingSpecId]);
+  }, [partnerMappings, mappingSpecId]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
