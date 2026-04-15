@@ -372,10 +372,16 @@ function applySegmentToIter(
   for (const leaf of leaves) {
     const parsed = parseX12Seg(leaf.seg);
     if (!parsed) continue;
-    // Don't overwrite — if a tag occurs multiple times within one
-    // iteration (e.g. two L11 sub-refs in the same stop), only the
-    // first wins. Users can model that as a sub-loop for full
-    // fidelity.
+    // Qualified segs (e.g. "REF*BM", "DTM*011", "N1*SF", "LIN*UP"):
+    // only assign when element 0 of this segment matches the
+    // qualifier. Lets us map REF*BM (BOL) distinctly from REF*LT (lot)
+    // even though both live in the same `REF` tag.
+    if (parsed.qualifier !== undefined) {
+      if ((seg.elements[0] ?? "") !== parsed.qualifier) continue;
+    }
+    // Don't overwrite — if a tag+qualifier occurs multiple times in
+    // one iteration (rare), only the first wins. Users can model that
+    // as a nested loop if they need every occurrence.
     if (!iter.leafValues.has(leaf.id)) {
       iter.leafValues.set(leaf.id, seg.elements[parsed.elIdx] ?? "");
     }
@@ -498,10 +504,49 @@ function directLeavesByTag(
   return out;
 }
 
-function parseX12Seg(seg: string): { tag: string; elIdx: number } | null {
-  const m = seg.match(/^([A-Z0-9]+)\*(\d+)/);
-  if (!m) return null;
-  return { tag: m[1], elIdx: parseInt(m[2], 10) - 1 };
+/**
+ * Parse a schema leaf's seg into { tag, qualifier?, elIdx }. Supports:
+ *
+ *   "B2*04"         → positional element 4
+ *   "REF*BM"        → REF with qualifier "BM" at element 1, value at element 2
+ *   "DTM*011"       → DTM with qualifier "011", value at element 2
+ *   "N1*SF"         → N1 with qualifier "SF", value at element 2
+ *   "PID*F*08"      → PID with qualifier "F" at element 1, value at element 8
+ *   "MAN*GM (T)"    → MAN with qualifier "GM"; display suffix " (T)" stripped
+ *
+ * Heuristic for the ambiguous 2-part form (TAG*STRING): treat STRING as
+ * a POSITION iff it's 1–2 digits (01..99). Otherwise it's a QUALIFIER
+ * and the value defaults to element 2. This correctly disambiguates
+ * "B2*04" (pos) from "DTM*011" (qual) since "011" is 3 chars.
+ */
+function parseX12Seg(seg: string): {
+  tag: string;
+  qualifier?: string;
+  elIdx: number;
+} | null {
+  // Strip display suffixes like " (T)", " (P)" used for disambiguation
+  // in the schema tree.
+  const cleaned = seg.replace(/\s*\([^)]*\)\s*$/, "").trim();
+  const parts = cleaned.split("*");
+  if (parts.length < 2) return null;
+  const tag = parts[0];
+  if (!/^[A-Z0-9]+$/.test(tag)) return null;
+
+  const isPositionalToken = (s: string) => /^\d{1,2}$/.test(s);
+  const last = parts[parts.length - 1];
+
+  if (parts.length === 2) {
+    if (isPositionalToken(last)) {
+      return { tag, elIdx: parseInt(last, 10) - 1 };
+    }
+    return { tag, qualifier: parts[1], elIdx: 1 };
+  }
+
+  // 3+ parts — qualifier at parts[1], position at the end if numeric.
+  if (isPositionalToken(last)) {
+    return { tag, qualifier: parts[1], elIdx: parseInt(last, 10) - 1 };
+  }
+  return { tag, qualifier: parts[1], elIdx: 1 };
 }
 
 function stringifyScalar(v: unknown): string | undefined {

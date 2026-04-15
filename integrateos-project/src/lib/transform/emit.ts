@@ -342,14 +342,19 @@ function emitX12Walk(
   ctx: EmitCtx,
   delims: EdiDelims,
 ): void {
+  // Group consecutive leaves by (tag, qualifier). Qualified segs like
+  // "REF*BM*02" and "REF*LT*02" produce DIFFERENT wire segments (one
+  // REF*BM and one REF*LT) even though they share the tag.
   let pendingTag: string | null = null;
+  let pendingQual: string | undefined = undefined;
   let pendingLeaves: SchemaNode[] = [];
 
   const flush = () => {
     if (pendingTag && pendingLeaves.length > 0) {
-      emitX12Segment(pendingTag, pendingLeaves, out, ctx, delims);
+      emitX12Segment(pendingTag, pendingQual, pendingLeaves, out, ctx, delims);
     }
     pendingTag = null;
+    pendingQual = undefined;
     pendingLeaves = [];
   };
 
@@ -357,8 +362,12 @@ function emitX12Walk(
     if (node.type === "el") {
       const parsed = parseX12Seg(node.seg);
       if (!parsed) continue;
-      if (pendingTag && pendingTag !== parsed.tag) flush();
+      if (pendingTag &&
+        (pendingTag !== parsed.tag || pendingQual !== parsed.qualifier)) {
+        flush();
+      }
       pendingTag = parsed.tag;
+      pendingQual = parsed.qualifier;
       pendingLeaves.push(node);
       continue;
     }
@@ -390,12 +399,18 @@ function emitX12Walk(
 
 function emitX12Segment(
   tag: string,
+  qualifier: string | undefined,
   leaves: SchemaNode[],
   out: string[],
   ctx: EmitCtx,
   delims: EdiDelims,
 ): void {
   const parts: string[] = [tag];
+  // When the leaves are qualified, pin element 01 to the qualifier
+  // so the wire looks like REF*BM*BOL-123 rather than REF**BOL-123.
+  if (qualifier !== undefined) {
+    parts.push(qualifier);
+  }
   for (const leaf of leaves) {
     const parsed = parseX12Seg(leaf.seg);
     if (!parsed) continue;
@@ -414,8 +429,25 @@ function emitX12Segment(
   out.push(parts.join(delims.elSep));
 }
 
-function parseX12Seg(seg: string): { tag: string; elIdx: number } | null {
-  const m = seg.match(/^([A-Z0-9]+)\*(\d+)/);
-  if (!m) return null;
-  return { tag: m[1], elIdx: parseInt(m[2], 10) - 1 };
+/** Same parser as extract.ts — see that file for format docs. */
+function parseX12Seg(seg: string): {
+  tag: string;
+  qualifier?: string;
+  elIdx: number;
+} | null {
+  const cleaned = seg.replace(/\s*\([^)]*\)\s*$/, "").trim();
+  const parts = cleaned.split("*");
+  if (parts.length < 2) return null;
+  const tag = parts[0];
+  if (!/^[A-Z0-9]+$/.test(tag)) return null;
+  const isPos = (s: string) => /^\d{1,2}$/.test(s);
+  const last = parts[parts.length - 1];
+  if (parts.length === 2) {
+    if (isPos(last)) return { tag, elIdx: parseInt(last, 10) - 1 };
+    return { tag, qualifier: parts[1], elIdx: 1 };
+  }
+  if (isPos(last)) {
+    return { tag, qualifier: parts[1], elIdx: parseInt(last, 10) - 1 };
+  }
+  return { tag, qualifier: parts[1], elIdx: 1 };
 }

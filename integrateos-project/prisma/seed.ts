@@ -16,6 +16,7 @@
  */
 import { PrismaClient } from "@prisma/client";
 import { seedPartners } from "./seed/partners";
+import { seedLookups } from "./seed/lookups";
 import { seedCoyoteMappings } from "./seed/mappings-coyote";
 import { seedBlueYonderMappings } from "./seed/mappings-blueyonder";
 
@@ -24,6 +25,9 @@ const prisma = new PrismaClient();
 async function main() {
   console.log("Seeding partners…");
   const partners = await seedPartners(prisma);
+
+  console.log("\nSeeding lookup tables…");
+  await seedLookups(prisma);
 
   const coyoteId = partners.get("coyote");
   if (coyoteId) {

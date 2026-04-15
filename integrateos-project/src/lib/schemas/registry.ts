@@ -12,6 +12,7 @@ import { TX_810_SOURCE } from "./x12/tx810";
 
 import { XML_TARGETS } from "./targets/xml";
 import { JSON_TARGET_DEFAULT } from "./targets/json";
+import { JSON_WMS_ASN_TARGET } from "./targets/wms_asn";
 import { OTM_TARGET_DEFAULT } from "./targets/otm";
 import { CSV_TARGET_DEFAULT } from "./targets/csv";
 
@@ -84,6 +85,20 @@ const JSON_DEFAULT: SchemaDescriptor = {
   nodes: JSON_TARGET_DEFAULT,
 };
 
+const JSON_WMS_ASN: SchemaDescriptor = {
+  id: "json:wms_asn",
+  kind: "builtin",
+  role: "target",
+  format: "json",
+  displayName: "Blue Yonder WMS — Inbound ASN",
+  description:
+    "Full 5-level nested shipment → orders → pallets → cases → items " +
+    "JSON shape used by Blue Yonder WMS (and most other modern warehouse " +
+    "APIs). Includes rollup totals, carrier details, and per-item catch " +
+    "weights / lots / expiry dates. ~40 leaves across five nested loops.",
+  nodes: JSON_WMS_ASN_TARGET,
+};
+
 const OTM_DEFAULT: SchemaDescriptor = {
   id: "otm_xml:default",
   kind: "builtin",
@@ -123,6 +138,7 @@ export const BUILTIN_SCHEMAS: SchemaDescriptor[] = [
   xmlTarget("856", "856 ASN"),
   xmlTarget("810", "810 Invoice"),
   JSON_DEFAULT,
+  JSON_WMS_ASN,
   OTM_DEFAULT,
   CSV_DEFAULT,
 ];
