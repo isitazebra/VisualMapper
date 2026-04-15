@@ -72,6 +72,9 @@ export default async function LandingPage() {
         </section>
 
         <p className="mt-10 text-xs text-ink-mute flex gap-4 flex-wrap">
+          <Link href="/health" className="underline">
+            Partner health →
+          </Link>
           <Link href="/endpoints" className="underline">
             Ingress endpoints →
           </Link>
