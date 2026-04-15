@@ -2,6 +2,7 @@ import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { checkDb } from "@/lib/dbHealth";
 import { DbSetupBanner } from "@/components/common/DbSetupBanner";
+import { RunsSearchInput } from "@/components/workspace/RunsSearchInput";
 
 export const dynamic = "force-dynamic";
 
@@ -10,16 +11,32 @@ export const metadata = { title: "Transaction stream — IntegrateOS" };
 export default async function RunsIndexPage({
   searchParams,
 }: {
-  searchParams: { endpointId?: string; partnerId?: string; status?: string };
+  searchParams: { endpointId?: string; partnerId?: string; status?: string; q?: string };
 }) {
   const err = await checkDb();
   if (err) return <DbSetupBanner error={err} />;
+
+  const q = searchParams.q?.trim();
+
+  const searchClause = q
+    ? {
+        OR: [
+          { id: { contains: q } },
+          { inputPayload: { contains: q, mode: "insensitive" as const } },
+          { outputPayload: { contains: q, mode: "insensitive" as const } },
+          { errorMessage: { contains: q, mode: "insensitive" as const } },
+          { endpoint: { name: { contains: q, mode: "insensitive" as const } } },
+          { partner: { name: { contains: q, mode: "insensitive" as const } } },
+        ],
+      }
+    : {};
 
   const runs = await prisma.transactionRun.findMany({
     where: {
       ...(searchParams.endpointId ? { endpointId: searchParams.endpointId } : {}),
       ...(searchParams.partnerId ? { partnerId: searchParams.partnerId } : {}),
       ...(searchParams.status ? { status: searchParams.status } : {}),
+      ...searchClause,
     },
     orderBy: { receivedAt: "desc" },
     take: 100,
@@ -33,6 +50,19 @@ export default async function RunsIndexPage({
     delivered: runs.filter((r) => r.status === "delivered").length,
     transformed: runs.filter((r) => r.status === "transformed").length,
     failed: runs.filter((r) => r.status === "failed").length,
+  };
+
+  // Build base href that preserves all current filters except the one
+  // a status pill toggles (so search + partner filter stick).
+  const baseQs = new URLSearchParams();
+  if (searchParams.partnerId) baseQs.set("partnerId", searchParams.partnerId);
+  if (searchParams.endpointId) baseQs.set("endpointId", searchParams.endpointId);
+  if (q) baseQs.set("q", q);
+  const hrefWithStatus = (status?: string) => {
+    const qs = new URLSearchParams(baseQs);
+    if (status) qs.set("status", status);
+    const s = qs.toString();
+    return `/runs${s ? `?${s}` : ""}`;
   };
 
   return (
@@ -54,27 +84,46 @@ export default async function RunsIndexPage({
           </div>
         </div>
 
-        <div className="flex gap-2 mb-3">
-          <FilterLink label="All" href="/runs" active={!searchParams.status} />
+        <RunsSearchInput
+          initial={q ?? ""}
+          partnerId={searchParams.partnerId}
+          endpointId={searchParams.endpointId}
+          status={searchParams.status}
+        />
+
+        <div className="flex gap-2 mb-3 mt-3">
+          <FilterLink label="All" href={hrefWithStatus()} active={!searchParams.status} />
           <FilterLink
             label="Delivered"
-            href="/runs?status=delivered"
+            href={hrefWithStatus("delivered")}
             active={searchParams.status === "delivered"}
           />
           <FilterLink
             label="Failed"
-            href="/runs?status=failed"
+            href={hrefWithStatus("failed")}
             active={searchParams.status === "failed"}
           />
         </div>
 
+        {q && (
+          <div className="text-xs text-ink-mute mb-2">
+            Searching for <code className="font-mono bg-paper-cream px-1 rounded">{q}</code>{" "}
+            — {runs.length} match{runs.length === 1 ? "" : "es"} (id, payloads, error
+            message, endpoint name, partner name).
+          </div>
+        )}
+
         {runs.length === 0 ? (
           <div className="text-sm text-ink-mute p-4 border border-dashed border-border rounded">
-            No transactions yet.{" "}
-            <Link href="/endpoints/new" className="underline">
-              Create an endpoint
-            </Link>{" "}
-            and send it a payload to see runs here.
+            {q ? "No runs match your search." : "No transactions yet."}{" "}
+            {!q && (
+              <>
+                <Link href="/endpoints/new" className="underline">
+                  Create an endpoint
+                </Link>{" "}
+                and send it a payload to see runs here.
+              </>
+            )}
           </div>
         ) : (
           <table className="w-full text-xs border border-border rounded bg-paper">
@@ -103,9 +152,7 @@ export default async function RunsIndexPage({
                   <Td>
                     <StatusPill count={null} label={r.status} tone={toneOf(r.status)} />
                   </Td>
-                  <Td className="font-mono truncate max-w-[14rem]">
-                    {r.endpoint.name}
-                  </Td>
+                  <Td className="font-mono truncate max-w-[14rem]">{r.endpoint.name}</Td>
                   <Td>{r.partner.name}</Td>
                   <Td className="font-mono">
                     {r.inputSize}
@@ -128,13 +175,7 @@ export default async function RunsIndexPage({
 function Th({ children }: { children: React.ReactNode }) {
   return <th className="px-2 py-1 text-left font-bold">{children}</th>;
 }
-function Td({
-  children,
-  className,
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
+function Td({ children, className }: { children: React.ReactNode; className?: string }) {
   return <td className={`px-2 py-1 ${className ?? ""}`}>{children}</td>;
 }
 
