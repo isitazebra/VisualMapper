@@ -105,6 +105,29 @@ local Postgres.
 
 A green Vercel build always runs the full chain.
 
+## Runtime endpoints (Phase 4.0)
+
+After the Phase 4.0 migration applies, create your first ingress
+endpoint:
+
+1. Visit `/endpoints/new` in the deployed app
+2. Pick a partner, a mapping spec, give it a name
+3. Pick **Sync** mode (return output in response) or **Forward** mode
+   (POST output to your egress URL)
+4. Click Create — you'll land on the detail page with the ingress URL
+5. Copy the URL and hit it:
+   ```bash
+   curl -X POST 'https://your-app.vercel.app/api/ingress/<token>' \
+     -H 'Content-Type: application/octet-stream' \
+     --data-binary @your-sample.edi
+   ```
+6. The response body is the transformed output (sync mode) or a 202
+   with a runId (forward mode).
+7. Every call shows up at `/runs` with full input/output/timing.
+
+Each run can be replayed against the current mapping from the detail
+page — handy after fixing a failed mapping.
+
 ## Troubleshooting
 
 - **"Prisma Client not generated"** — `postinstall` didn't run. Clear the
