@@ -119,11 +119,17 @@ model TransactionRun {
   transformedAt    DateTime?
   deliveredAt      DateTime?
   durationMs       Int?
+  // Exception-queue workflow: failures default to unresolved; flipping
+  // to true hides them from the queue without deleting the run.
+  resolved         Boolean   @default(false)
+  resolvedAt       DateTime?
+  resolvedNote     String?
 
   @@index([endpointId, receivedAt(sort: Desc)])
   @@index([partnerId, receivedAt(sort: Desc)])
   @@index([mappingSpecId])
   @@index([status])
+  @@index([status, resolved])
 
   events TransactionEvent[]
 }

@@ -81,6 +81,9 @@ export default async function LandingPage() {
           <Link href="/runs" className="underline">
             Transaction stream →
           </Link>
+          <Link href="/exceptions" className="underline">
+            Exceptions →
+          </Link>
           <Link href="/schemas" className="underline">
             Browse schemas →
           </Link>
