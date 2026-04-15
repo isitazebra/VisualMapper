@@ -84,6 +84,9 @@ export default async function LandingPage() {
           <Link href="/exceptions" className="underline">
             Exceptions →
           </Link>
+          <Link href="/alerts" className="underline">
+            Alerts →
+          </Link>
           <Link href="/schemas" className="underline">
             Browse schemas →
           </Link>

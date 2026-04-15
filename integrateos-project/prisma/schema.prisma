@@ -50,11 +50,12 @@ model Partner {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  mappings  MappingSpec[]
-  schemas   Schema[]
-  lookups   LookupTable[]
-  endpoints Endpoint[]
-  runs      TransactionRun[]
+  mappings   MappingSpec[]
+  schemas    Schema[]
+  lookups    LookupTable[]
+  endpoints  Endpoint[]
+  runs       TransactionRun[]
+  alertRules AlertRule[]
 }
 
 // ─── Runtime ────────────────────────────────────────────────────────
@@ -82,7 +83,8 @@ model Endpoint {
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
 
-  runs TransactionRun[]
+  runs       TransactionRun[]
+  alertRules AlertRule[]
 
   @@index([partnerId])
   @@index([mappingSpecId])
@@ -152,6 +154,52 @@ model TransactionEvent {
   detail     Json?
 
   @@index([runId, at])
+}
+
+// ─── Alerts (Phase 4.5) ─────────────────────────────────────────────
+// Alert rule — fires a webhook when its condition is met over the
+// configured rolling time window. Rules can be scoped to a specific
+// endpoint, a partner, or global (no scope set). Cooldown: a rule
+// won't re-fire within `windowMin` minutes of its last trigger.
+model AlertRule {
+  id              String       @id @default(cuid())
+  name            String
+  partnerId       String?
+  partner         Partner?     @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+  endpointId      String?
+  endpoint        Endpoint?    @relation(fields: [endpointId], references: [id], onDelete: SetNull)
+  // "error_rate_over" — failed/total ≥ threshold (threshold is 0..1)
+  // "failure_count"   — failed ≥ threshold
+  // "volume_drop"     — total < threshold (alerts on missing traffic)
+  condition       String
+  threshold       Float
+  windowMin       Int
+  channel         String       @default("webhook")
+  webhookUrl      String?
+  active          Boolean      @default(true)
+  lastTriggeredAt DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  events AlertEvent[]
+
+  @@index([active])
+  @@index([partnerId])
+  @@index([endpointId])
+}
+
+// Audit log of every alert that fired — kept regardless of whether
+// the webhook delivery succeeded, so you can see what happened even
+// when the receiver is down.
+model AlertEvent {
+  id          String   @id @default(cuid())
+  ruleId      String
+  rule        AlertRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  triggeredAt DateTime  @default(now())
+  summary     String
+  payload     Json
+
+  @@index([ruleId, triggeredAt(sort: Desc)])
 }
 
 // ─── Lookup table for the `lookup` rule type ───
