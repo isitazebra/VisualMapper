@@ -17,6 +17,7 @@ export default async function RunDetailPage({ params }: { params: { id: string }
       endpoint: { select: { id: true, name: true, mode: true, egressUrl: true } },
       partner: { select: { id: true, name: true } },
       mappingSpec: { select: { id: true, name: true } },
+      events: { orderBy: { at: "asc" } },
     },
   });
   if (!run) notFound();
@@ -78,6 +79,45 @@ export default async function RunDetailPage({ params }: { params: { id: string }
             <pre className="text-xs font-mono whitespace-pre-wrap">
               {run.errorMessage}
             </pre>
+          </section>
+        )}
+
+        {run.events.length > 0 && (
+          <section className="mb-6 border border-border rounded bg-paper overflow-hidden">
+            <div className="px-3 py-1.5 bg-paper-cream border-b border-border text-xs font-bold">
+              Lifecycle
+            </div>
+            <ol className="divide-y divide-border">
+              {run.events.map((e) => (
+                <li
+                  key={e.id}
+                  className="flex items-center gap-3 px-3 py-1.5 text-xs"
+                >
+                  <span
+                    className={`font-mono font-bold text-[10px] uppercase px-1.5 py-0.5 rounded ${
+                      e.stage === "failed"
+                        ? "bg-brand-red/10 text-brand-red"
+                        : e.stage === "egress_sent" || e.stage === "egress_response"
+                          ? "bg-brand-purple-soft text-brand-purple"
+                          : e.stage === "transformed" || e.stage === "delivered"
+                            ? "bg-brand-green-soft text-brand-green"
+                            : "bg-paper-cream text-ink-soft"
+                    }`}
+                  >
+                    {e.stage}
+                  </span>
+                  <span className="font-mono text-ink-mute w-24">
+                    +{e.elapsedMs ?? 0}ms
+                  </span>
+                  <span className="flex-1 truncate">
+                    {e.message ?? ""}
+                  </span>
+                  <span className="text-ink-mute font-mono text-[10px]">
+                    {e.at.toLocaleTimeString()}
+                  </span>
+                </li>
+              ))}
+            </ol>
           </section>
         )}
 

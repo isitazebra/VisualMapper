@@ -1,18 +1,20 @@
 /**
  * Runtime orchestrator. Given an Endpoint + an inbound payload, runs
- * the mapping spec's transform against the current schemas + lookup
- * tables, persists a TransactionRun row capturing the full lifecycle,
- * and (when mode=forward) POSTs the output to the egress URL.
+ * the mapping spec's transform, persists a TransactionRun row with a
+ * TransactionEvent per lifecycle stage, and (in forward mode) POSTs
+ * the output to the egress URL.
  *
  * Called by the /api/ingress/[token] route. Self-contained — does not
  * depend on any Next.js request/response types so it can be reused
- * from other ingress surfaces later (scheduled jobs, SFTP poll, etc.).
+ * from other ingress surfaces (scheduled jobs, SFTP poll, etc.).
  */
-import type { Endpoint, Prisma, PrismaClient } from "@prisma/client";
+import type { Endpoint, PrismaClient } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { flattenDbSpec } from "@/lib/mappingSpec";
 import { resolveSchemas } from "@/lib/schemas/resolver";
 import { runTransform } from "@/lib/transform";
+import { evaluateAlertsForRun } from "./alerts";
 
 type Tx = PrismaClient | Prisma.TransactionClient;
 
@@ -31,8 +33,6 @@ export async function executeEndpoint(
 ): Promise<ExecuteResult> {
   const startedAt = Date.now();
 
-  // Always create the run row first so partial failures are still
-  // visible in the UI.
   const initial = await prisma.transactionRun.create({
     data: {
       endpointId: endpoint.id,
@@ -43,9 +43,11 @@ export async function executeEndpoint(
       inputSize: Buffer.byteLength(inputPayload, "utf8"),
     },
   });
+  await emitEvent(prisma, initial.id, "received", startedAt, {
+    message: `${Buffer.byteLength(inputPayload, "utf8")} bytes received`,
+  });
 
   try {
-    // Load the mapping + schemas + lookups.
     const spec = await prisma.mappingSpec.findUnique({
       where: { id: endpoint.mappingSpecId },
       include: { fieldMappings: { include: { overrides: true } } },
@@ -88,7 +90,10 @@ export async function executeEndpoint(
       }
     }
 
-    // Run the transform (same engine the studio preview uses).
+    await emitEvent(prisma, initial.id, "parsed", startedAt, {
+      message: `source=${source.format} target=${target.format} maps=${hydrated.maps.length} lookups=${lookupRows.length}`,
+    });
+
     const result = runTransform({
       source,
       target,
@@ -99,6 +104,10 @@ export async function executeEndpoint(
     });
 
     if (!result.ok) {
+      await emitEvent(prisma, initial.id, "failed", startedAt, {
+        message: result.error,
+        detail: { stage: "transform" },
+      });
       return await markFailed(
         prisma,
         initial.id,
@@ -121,9 +130,20 @@ export async function executeEndpoint(
         transformedAt,
       },
     });
+    await emitEvent(prisma, initial.id, "transformed", startedAt, {
+      message: `${result.mappedCount} mapped · ${result.unmappedLeafCount} skipped`,
+      detail: {
+        mapped: result.mappedCount,
+        skipped: result.unmappedLeafCount,
+        transactionCount: result.transactionCount,
+      },
+    });
 
     // Egress: if mode === "forward", POST to egressUrl.
     if (endpoint.mode === "forward" && endpoint.egressUrl) {
+      await emitEvent(prisma, initial.id, "egress_sent", startedAt, {
+        message: `POST ${endpoint.egressUrl}`,
+      });
       const egress = await dispatchEgress(endpoint, result.output);
       const durationMs = Date.now() - startedAt;
       await prisma.transactionRun.update({
@@ -139,9 +159,27 @@ export async function executeEndpoint(
           durationMs,
         },
       });
+      await emitEvent(
+        prisma,
+        initial.id,
+        egress.ok ? "egress_response" : "failed",
+        startedAt,
+        {
+          message: egress.ok
+            ? `HTTP ${egress.httpStatus}`
+            : `Egress failed: ${egress.error ?? "unknown"}`,
+          detail: {
+            httpStatus: egress.httpStatus,
+            body: egress.body?.slice(0, 512),
+          },
+        },
+      );
+      const finalStatus = egress.ok ? "delivered" : "failed";
+      // Fire alerts asynchronously — don't block the response on webhook I/O.
+      void evaluateAlertsForRun(initial.id, endpoint, finalStatus);
       return {
         runId: initial.id,
-        status: egress.ok ? "delivered" : "failed",
+        status: finalStatus,
         output: result.output,
         httpStatus: egress.ok ? 202 : 502,
         errorMessage: egress.ok ? undefined : egress.error,
@@ -157,6 +195,7 @@ export async function executeEndpoint(
         durationMs: Date.now() - startedAt,
       },
     });
+    void evaluateAlertsForRun(initial.id, endpoint, "delivered");
     return {
       runId: initial.id,
       status: "delivered",
@@ -171,6 +210,33 @@ export async function executeEndpoint(
       err instanceof Error ? err.message : String(err),
       startedAt,
     );
+  }
+}
+
+async function emitEvent(
+  db: Tx,
+  runId: string,
+  stage: string,
+  startedAt: number,
+  opts?: { message?: string; detail?: Record<string, unknown> },
+): Promise<void> {
+  try {
+    await db.transactionEvent.create({
+      data: {
+        runId,
+        stage,
+        elapsedMs: Date.now() - startedAt,
+        message: opts?.message ?? null,
+        // Prisma's InputJsonValue rejects generic Record types; widen
+        // to JsonValue via JSON round-trip so any serializable shape
+        // flows through.
+        detail: opts?.detail
+          ? (JSON.parse(JSON.stringify(opts.detail)) as Prisma.InputJsonValue)
+          : Prisma.DbNull,
+      },
+    });
+  } catch {
+    // Event logging must never crash the pipeline.
   }
 }
 
@@ -190,6 +256,18 @@ async function markFailed(
       durationMs: Date.now() - startedAt,
     },
   });
+  await emitEvent(db, runId, "failed", startedAt, {
+    message,
+    detail: { stage },
+  });
+  // Look up endpoint for alert evaluation.
+  const run = await db.transactionRun.findUnique({
+    where: { id: runId },
+    include: { endpoint: true },
+  });
+  if (run?.endpoint) {
+    void evaluateAlertsForRun(runId, run.endpoint, "failed");
+  }
   return {
     runId,
     status: "failed",

@@ -124,6 +124,28 @@ model TransactionRun {
   @@index([partnerId, receivedAt(sort: Desc)])
   @@index([mappingSpecId])
   @@index([status])
+
+  events TransactionEvent[]
+}
+
+// One row per lifecycle event within a TransactionRun. Lets us render a
+// timeline ("received → parsed → transformed → egress_sent → delivered")
+// with timing between steps, rather than only the rollup on the run row.
+model TransactionEvent {
+  id         String          @id @default(cuid())
+  runId      String
+  run        TransactionRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+  // "received" | "parsed" | "transformed" | "emitted" | "egress_sent"
+  // | "egress_response" | "failed" | "replayed"
+  stage      String
+  at         DateTime        @default(now())
+  // Elapsed ms since the run was received (not since the previous
+  // event — simpler aggregations downstream).
+  elapsedMs  Int?
+  message    String?
+  detail     Json?
+
+  @@index([runId, at])
 }
 
 // ─── Lookup table for the `lookup` rule type ───
