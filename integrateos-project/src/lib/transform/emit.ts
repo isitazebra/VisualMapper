@@ -34,6 +34,8 @@ export function emitTarget(params: EmitParams): string {
       return emitXml(ctx);
     case "csv":
       return emitCsv(ctx);
+    case "x12":
+      return emitX12(ctx);
     default:
       return emitJson(ctx);
   }
@@ -307,4 +309,103 @@ function emitCsv(ctx: EmitCtx): string {
 function csvCell(v: string): string {
   if (/[",\n\r]/.test(v)) return `"${v.replace(/"/g, '""')}"`;
   return v;
+}
+
+// ─── X12 ─────────────────────────────────────────────────────────────
+/**
+ * Generate X12 from a target schema whose leaves carry EDI segs
+ * (`ISA*01`, `B2*04`, etc.). Walk the tree in schema order, gathering
+ * leaves into segments when consecutive leaves share the same tag, and
+ * expanding loops by iterating the driver source loop.
+ *
+ * Segments are joined with `~\n`. Trailing empty elements are trimmed
+ * so output looks like `B2*02*CLNL*04*LD23029450` rather than
+ * `B2**CLNL**LD23029450**`.
+ */
+function emitX12(ctx: EmitCtx): string {
+  const out: string[] = [];
+  const tops = topLevelNodes(ctx.targetDescriptor.nodes);
+  emitX12Walk(tops, out, ctx);
+  return out.join("~\n") + (out.length > 0 ? "~" : "");
+}
+
+function emitX12Walk(nodes: SchemaNode[], out: string[], ctx: EmitCtx): void {
+  let pendingTag: string | null = null;
+  let pendingLeaves: SchemaNode[] = [];
+
+  const flush = () => {
+    if (pendingTag && pendingLeaves.length > 0) {
+      emitX12Segment(pendingTag, pendingLeaves, out, ctx);
+    }
+    pendingTag = null;
+    pendingLeaves = [];
+  };
+
+  for (const node of nodes) {
+    if (node.type === "el") {
+      const parsed = parseX12Seg(node.seg);
+      if (!parsed) continue;
+      if (pendingTag && pendingTag !== parsed.tag) flush();
+      pendingTag = parsed.tag;
+      pendingLeaves.push(node);
+      continue;
+    }
+    if (node.type === "group") {
+      flush();
+      const kids = (node.kids ?? [])
+        .map((id) => ctx.targetById.get(id))
+        .filter((n): n is SchemaNode => !!n);
+      emitX12Walk(kids, out, ctx);
+      flush();
+      continue;
+    }
+    if (node.type === "loop") {
+      flush();
+      const driverLoop = ctx.driverByTargetLoop.get(node.id) ?? null;
+      const iters = findIterations(driverLoop, ctx);
+      const kids = (node.kids ?? [])
+        .map((id) => ctx.targetById.get(id))
+        .filter((n): n is SchemaNode => !!n);
+      for (let i = 0; i < iters.length; i++) {
+        if (driverLoop) ctx.stack.push({ loopId: driverLoop, iterNode: iters[i], iterIdx: i });
+        emitX12Walk(kids, out, ctx);
+        if (driverLoop) ctx.stack.pop();
+      }
+    }
+  }
+  flush();
+}
+
+function emitX12Segment(
+  tag: string,
+  leaves: SchemaNode[],
+  out: string[],
+  ctx: EmitCtx,
+): void {
+  const parts: string[] = [tag];
+  for (const leaf of leaves) {
+    const parsed = parseX12Seg(leaf.seg);
+    if (!parsed) continue;
+    const rule = ctx.rulesByTargetId.get(leaf.id);
+    let value: string | undefined;
+    if (rule) {
+      const srcValue = ctx.applyCtx.resolveSource?.(rule.sid);
+      value = applyRule(rule, srcValue, ctx.applyCtx);
+    }
+    const position = parsed.elIdx + 1;
+    while (parts.length <= position) parts.push("");
+    parts[position] = value ?? "";
+  }
+  // Trim trailing empty elements — standard X12 stops at the last
+  // non-empty element rather than padding.
+  while (parts.length > 1 && parts[parts.length - 1] === "") parts.pop();
+  // Skip empty segments entirely — no point emitting a "B2" with no data.
+  if (parts.length <= 1) return;
+  out.push(parts.join("*"));
+}
+
+function parseX12Seg(seg: string): { tag: string; elIdx: number } | null {
+  const m = seg.match(/^([A-Z0-9]+)\*(\d+)/);
+  if (!m) return null;
+  return { tag: m[1], elIdx: parseInt(m[2], 10) - 1 };
 }

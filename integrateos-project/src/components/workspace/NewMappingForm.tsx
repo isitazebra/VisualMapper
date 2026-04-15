@@ -77,7 +77,7 @@ export function NewMappingForm({ partnerId, sourceSchemas, targetSchemas }: NewM
       // Legacy columns — still required by the schema. For "custom" mode
       // where no X12 tx applies we stamp them with "custom" so the row is
       // well-formed; the source of truth is sourceSchemaId / targetSchemaId.
-      txType: mode === "preset" ? txType : "custom",
+      txType: mode === "preset" ? txType : (sourceDesc?.id.startsWith("x12:") ? txType : "custom"),
       ediVersion: mode === "preset" ? ediVersion : "custom",
       targetFormat:
         mode === "preset" ? targetFormat : (targetDesc?.format ?? "json"),

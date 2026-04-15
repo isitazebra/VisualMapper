@@ -47,7 +47,10 @@ function x12Source(tx: TxType, label: string, body: SchemaNode[]): SchemaDescrip
   return {
     id: `x12:${tx}`,
     kind: "builtin",
-    role: "source",
+    // Same schema works as either source (parse an inbound X12) or
+    // target (generate an outbound X12) — Phase 2.5g added the X12
+    // emitter.
+    role: "both",
     format: "x12",
     displayName: `X12 ${tx} ${label}`,
     description: `X12 ${label} — ISA/GS/ST envelope + ${tx} body`,
