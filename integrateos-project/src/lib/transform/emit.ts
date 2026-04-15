@@ -1,18 +1,14 @@
 /**
- * Target-payload emitters — loop-aware. Given the target schema, the
- * extracted source values (per loop iteration), the effective rule for
- * each target leaf, and a source-leaf → loop-ancestor map, produces a
- * formatted string with one iteration in the target per iteration in
- * the "driver" source loop.
- *
- * Driver-loop detection: for each target loop we look at its descendant
- * leaves' rules, find each rule's source-loop ancestor, and pick the
- * most common one. If no descendants reference a looped source, the
- * target loop emits a single iteration (legacy behavior).
+ * Target-payload emitters — stack-aware. Walks the target schema with
+ * an active loop stack; resolves source values by looking in the
+ * innermost iteration that contains them, then falling back outward
+ * to the root. For each target loop, its "driver" source loop is
+ * picked by majority vote of its descendants' rules; iterations come
+ * from the current stack's innermost subLoops (or from rootLoops).
  */
 import type { SchemaDescriptor } from "../schemas/registry";
 import type { FieldMap, SchemaNode } from "../types";
-import type { ExtractResult } from "./extract";
+import type { ExtractResult, IterationNode } from "./extract";
 import {
   buildLoopAncestry,
   descendantLeaves,
@@ -24,9 +20,7 @@ export interface EmitParams {
   targetDescriptor: SchemaDescriptor;
   sourceDescriptor: SchemaDescriptor;
   extract: ExtractResult;
-  /** Effective rule per target leaf id (customer-aware). */
   rulesByTargetId: Map<string, FieldMap>;
-  /** Passed down into applyCtx so `lookup` rules can resolve. */
   lookupTables?: Map<string, Record<string, string>>;
 }
 
@@ -45,45 +39,40 @@ export function emitTarget(params: EmitParams): string {
   }
 }
 
+type LoopStack = Array<{ loopId: string; iterNode: IterationNode; iterIdx: number }>;
+
 interface EmitCtx {
   targetDescriptor: SchemaDescriptor;
   targetById: Map<string, SchemaNode>;
-  sourceLeafToLoop: Map<string, string | null>;
   driverByTargetLoop: Map<string, string | null>;
   extract: ExtractResult;
   rulesByTargetId: Map<string, FieldMap>;
   applyCtx: ApplyContext;
-  /** Mutated in-place by the emit walkers so applyCtx.resolveSource
-   * (which closes over this) sees the current iteration state. */
-  iterCtxRef: { current: Map<string, number> };
+  /** Mutated in place as we descend; applyCtx.resolveSource closes over it. */
+  stack: LoopStack;
 }
 
 function buildEmitCtx(params: EmitParams): EmitCtx {
   const targetById = new Map(params.targetDescriptor.nodes.map((n) => [n.id, n]));
-  const sourceLeafToLoop = params.extract.leafToLoop;
-  // Pre-index source nodes by seg so resolveSource can accept either
-  // the id ("b204") or the seg ("B2*04") — handy for user-authored
-  // conditions and concat templates.
+  const driverByTargetLoop = buildDriverMap(
+    params.targetDescriptor.nodes,
+    params.rulesByTargetId,
+    params.extract.leafToLoop,
+  );
   const sourceIdBySeg = new Map<string, string>();
   for (const n of params.sourceDescriptor.nodes) {
     if (!sourceIdBySeg.has(n.seg)) sourceIdBySeg.set(n.seg, n.id);
   }
-  const driverByTargetLoop = buildDriverMap(
-    params.targetDescriptor.nodes,
-    params.rulesByTargetId,
-    sourceLeafToLoop,
-  );
-  const iterCtxRef = { current: new Map<string, number>() };
+  const stack: LoopStack = [];
 
-  function resolveById(sourceId: string): string | undefined {
-    const arr = params.extract.values.get(sourceId);
-    if (!arr) return undefined;
-    const loop = sourceLeafToLoop.get(sourceId);
-    if (loop && iterCtxRef.current.has(loop)) {
-      return arr[iterCtxRef.current.get(loop)!];
+  /** Walk the stack innermost-first; fall back to rootLeaves. */
+  const resolveById = (sourceId: string): string | undefined => {
+    for (let i = stack.length - 1; i >= 0; i--) {
+      const v = stack[i].iterNode.leafValues.get(sourceId);
+      if (v !== undefined) return v;
     }
-    return arr[0];
-  }
+    return params.extract.rootLeaves.get(sourceId);
+  };
 
   const applyCtx: ApplyContext = {
     counters: new Map(),
@@ -91,22 +80,47 @@ function buildEmitCtx(params: EmitParams): EmitCtx {
     resolveSource: (nameOrSeg: string) => {
       const byId = resolveById(nameOrSeg);
       if (byId !== undefined) return byId;
-      const mappedId = sourceIdBySeg.get(nameOrSeg);
-      if (mappedId) return resolveById(mappedId);
+      const mapped = sourceIdBySeg.get(nameOrSeg);
+      if (mapped) return resolveById(mapped);
       return undefined;
     },
-    allValuesForSource: (sourceId) => params.extract.values.get(sourceId),
+    allValuesForSource: (sourceId) => collectAllValues(sourceId, params.extract),
   };
+
   return {
     targetDescriptor: params.targetDescriptor,
     targetById,
-    sourceLeafToLoop,
     driverByTargetLoop,
     extract: params.extract,
     rulesByTargetId: params.rulesByTargetId,
     applyCtx,
-    iterCtxRef,
+    stack,
   };
+}
+
+/**
+ * Walks the whole extracted tree collecting every value for `sourceId`
+ * — used by the `aggregate` rule type to sum/count across iterations
+ * regardless of nesting level.
+ */
+function collectAllValues(
+  sourceId: string,
+  extract: ExtractResult,
+): (string | undefined)[] {
+  const out: (string | undefined)[] = [];
+  const rootV = extract.rootLeaves.get(sourceId);
+  if (rootV !== undefined) out.push(rootV);
+  const walk = (node: IterationNode) => {
+    const v = node.leafValues.get(sourceId);
+    if (v !== undefined) out.push(v);
+    for (const iters of node.subLoops.values()) {
+      for (const iter of iters) walk(iter);
+    }
+  };
+  for (const iters of extract.rootLoops.values()) {
+    for (const iter of iters) walk(iter);
+  }
+  return out;
 }
 
 function buildDriverMap(
@@ -114,9 +128,7 @@ function buildDriverMap(
   rulesByTargetId: Map<string, FieldMap>,
   sourceLeafToLoop: Map<string, string | null>,
 ): Map<string, string | null> {
-  const targetLoopAncestry = buildLoopAncestry(targetNodes);
   const driver = new Map<string, string | null>();
-
   for (const node of targetNodes) {
     if (node.type !== "loop") continue;
     const leaves = descendantLeaves(node, targetNodes);
@@ -133,79 +145,71 @@ function buildDriverMap(
     }
     driver.set(node.id, best ? best[0] : null);
   }
-
-  void targetLoopAncestry;
+  void buildLoopAncestry; // retained for future use
   return driver;
 }
 
-/** Resolve a source value for a specific target leaf rule, honoring
- * the current iteration context. */
-function resolveSource(
-  rule: FieldMap,
-  iterCtx: Map<string, number>,
+/** Iterations of the driver loop in the current scope. Looks inward
+ * first (if the driver is a sub-loop of something on the stack), then
+ * at the root. */
+function findIterations(
+  driverLoopId: string | null,
   ctx: EmitCtx,
-): string | undefined {
-  const arr = ctx.extract.values.get(rule.sid);
-  if (!arr) return undefined;
-  const sourceLoop = ctx.sourceLeafToLoop.get(rule.sid);
-  if (sourceLoop && iterCtx.has(sourceLoop)) {
-    return arr[iterCtx.get(sourceLoop)!] ?? undefined;
+): IterationNode[] {
+  if (!driverLoopId) return [emptyIter()];
+  for (let i = ctx.stack.length - 1; i >= 0; i--) {
+    const iters = ctx.stack[i].iterNode.subLoops.get(driverLoopId);
+    if (iters) return iters;
   }
-  return arr[0];
+  return ctx.extract.rootLoops.get(driverLoopId) ?? [emptyIter()];
+}
+
+function emptyIter(): IterationNode {
+  return { leafValues: new Map(), subLoops: new Map() };
 }
 
 // ─── JSON ────────────────────────────────────────────────────────────
 function emitJson(ctx: EmitCtx): string {
   const tops = topLevelNodes(ctx.targetDescriptor.nodes);
   const obj: Record<string, unknown> = {};
-  const iterCtx = ctx.iterCtxRef.current;
   for (const n of tops) {
-    const v = buildJson(n, iterCtx, ctx);
+    const v = buildJson(n, ctx);
     if (v !== undefined) obj[jsonKey(n)] = v;
   }
   return JSON.stringify(obj, null, 2);
 }
 
-function buildJson(
-  node: SchemaNode,
-  iterCtx: Map<string, number>,
-  ctx: EmitCtx,
-): unknown {
+function buildJson(node: SchemaNode, ctx: EmitCtx): unknown {
   if (node.type === "el") {
     const rule = ctx.rulesByTargetId.get(node.id);
     if (!rule) return undefined;
-    const srcValue = resolveSource(rule, iterCtx, ctx);
-    const result = applyRule(rule, srcValue, ctx.applyCtx);
-    return result;
+    const srcValue = ctx.applyCtx.resolveSource?.(rule.sid);
+    return applyRule(rule, srcValue, ctx.applyCtx);
   }
-
   if (node.type === "loop") {
     const driverLoop = ctx.driverByTargetLoop.get(node.id) ?? null;
-    const n = driverLoop
-      ? Math.max(1, ctx.extract.loopIterationCount.get(driverLoop) ?? 1)
-      : 1;
+    const iters = findIterations(driverLoop, ctx);
     const items: Record<string, unknown>[] = [];
-    for (let i = 0; i < n; i++) {
-      if (driverLoop) iterCtx.set(driverLoop, i);
+    for (let i = 0; i < iters.length; i++) {
+      if (driverLoop) ctx.stack.push({ loopId: driverLoop, iterNode: iters[i], iterIdx: i });
       const item: Record<string, unknown> = {};
       for (const kidId of node.kids ?? []) {
         const kid = ctx.targetById.get(kidId);
         if (!kid) continue;
-        const v = buildJson(kid, iterCtx, ctx);
+        const v = buildJson(kid, ctx);
         if (v !== undefined) item[jsonKey(kid)] = v;
       }
+      if (driverLoop) ctx.stack.pop();
       if (Object.keys(item).length > 0) items.push(item);
-      if (driverLoop) iterCtx.delete(driverLoop);
     }
     return items.length > 0 ? items : undefined;
   }
-
   // group
   const obj: Record<string, unknown> = {};
   for (const kidId of node.kids ?? []) {
     const kid = ctx.targetById.get(kidId);
     if (!kid) continue;
-    const v = buildJson(kid, iterCtx, ctx);
+    const v = buildJson(kid, ctx);
     if (v !== undefined) obj[jsonKey(kid)] = v;
   }
   return Object.keys(obj).length > 0 ? obj : undefined;
@@ -221,15 +225,13 @@ function emitXml(ctx: EmitCtx): string {
   const tops = topLevelNodes(ctx.targetDescriptor.nodes);
   const rootName = ctx.targetDescriptor.txType ? ctx.targetDescriptor.txType : "Root";
   const lines: string[] = [`<${rootName}>`];
-  const iterCtx = ctx.iterCtxRef.current;
-  for (const n of tops) buildXml(n, iterCtx, ctx, lines, 1);
+  for (const n of tops) buildXml(n, ctx, lines, 1);
   lines.push(`</${rootName}>`);
   return lines.join("\n");
 }
 
 function buildXml(
   node: SchemaNode,
-  iterCtx: Map<string, number>,
   ctx: EmitCtx,
   lines: string[],
   depth: number,
@@ -240,7 +242,7 @@ function buildXml(
   if (node.type === "el") {
     const rule = ctx.rulesByTargetId.get(node.id);
     if (!rule) return;
-    const srcValue = resolveSource(rule, iterCtx, ctx);
+    const srcValue = ctx.applyCtx.resolveSource?.(rule.sid);
     const result = applyRule(rule, srcValue, ctx.applyCtx);
     if (result === undefined) return;
     lines.push(`${indent}<${tag}>${escapeXml(result)}</${tag}>`);
@@ -249,31 +251,28 @@ function buildXml(
 
   if (node.type === "loop") {
     const driverLoop = ctx.driverByTargetLoop.get(node.id) ?? null;
-    const n = driverLoop
-      ? Math.max(1, ctx.extract.loopIterationCount.get(driverLoop) ?? 1)
-      : 1;
-    for (let i = 0; i < n; i++) {
-      if (driverLoop) iterCtx.set(driverLoop, i);
+    const iters = findIterations(driverLoop, ctx);
+    for (let i = 0; i < iters.length; i++) {
+      if (driverLoop) ctx.stack.push({ loopId: driverLoop, iterNode: iters[i], iterIdx: i });
       const childLines: string[] = [];
       for (const kidId of node.kids ?? []) {
         const kid = ctx.targetById.get(kidId);
-        if (kid) buildXml(kid, iterCtx, ctx, childLines, depth + 1);
+        if (kid) buildXml(kid, ctx, childLines, depth + 1);
       }
+      if (driverLoop) ctx.stack.pop();
       if (childLines.length > 0) {
         lines.push(`${indent}<${tag}>`);
         lines.push(...childLines);
         lines.push(`${indent}</${tag}>`);
       }
-      if (driverLoop) iterCtx.delete(driverLoop);
     }
     return;
   }
 
-  // group
   const childLines: string[] = [];
   for (const kidId of node.kids ?? []) {
     const kid = ctx.targetById.get(kidId);
-    if (kid) buildXml(kid, iterCtx, ctx, childLines, depth + 1);
+    if (kid) buildXml(kid, ctx, childLines, depth + 1);
   }
   if (childLines.length === 0) return;
   lines.push(`${indent}<${tag}>`);
@@ -295,11 +294,10 @@ function escapeXml(v: string): string {
 function emitCsv(ctx: EmitCtx): string {
   const leaves = ctx.targetDescriptor.nodes.filter((n) => n.type === "el");
   const headers = leaves.map((n) => n.label);
-  const iterCtx = ctx.iterCtxRef.current;
   const row = leaves.map((n) => {
     const rule = ctx.rulesByTargetId.get(n.id);
     if (!rule) return "";
-    const srcValue = resolveSource(rule, iterCtx, ctx);
+    const srcValue = ctx.applyCtx.resolveSource?.(rule.sid);
     const result = applyRule(rule, srcValue, ctx.applyCtx);
     return csvCell(result ?? "");
   });
