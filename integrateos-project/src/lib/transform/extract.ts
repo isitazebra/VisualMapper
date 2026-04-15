@@ -247,9 +247,12 @@ function walkX12(
     for (const leaf of leaves) {
       const parsed = parseX12Seg(leaf.seg);
       if (!parsed) continue;
-      // Only assign if the leaf lives outside all loops.
+      // Use the same matcher the loop path does so root-level
+      // qualified segs (e.g. envelope REF / DTM) behave consistently.
+      const value = matchAndExtract(seg, parsed);
+      if (value === null) continue;
       if (result.rootLeaves.get(leaf.id) === undefined) {
-        result.rootLeaves.set(leaf.id, seg.elements[parsed.elIdx] ?? "");
+        result.rootLeaves.set(leaf.id, value);
       }
     }
     i++;
@@ -372,18 +375,13 @@ function applySegmentToIter(
   for (const leaf of leaves) {
     const parsed = parseX12Seg(leaf.seg);
     if (!parsed) continue;
-    // Qualified segs (e.g. "REF*BM", "DTM*011", "N1*SF", "LIN*UP"):
-    // only assign when element 0 of this segment matches the
-    // qualifier. Lets us map REF*BM (BOL) distinctly from REF*LT (lot)
-    // even though both live in the same `REF` tag.
-    if (parsed.qualifier !== undefined) {
-      if ((seg.elements[0] ?? "") !== parsed.qualifier) continue;
-    }
-    // Don't overwrite — if a tag+qualifier occurs multiple times in
-    // one iteration (rare), only the first wins. Users can model that
-    // as a nested loop if they need every occurrence.
+    const value = matchAndExtract(seg, parsed);
+    if (value === null) continue; // qualifier filter didn't match
+    // Don't overwrite — if the same leaf resolves twice within one
+    // iteration, first wins. Users can model repeating fields as a
+    // nested loop when they need every occurrence.
     if (!iter.leafValues.has(leaf.id)) {
-      iter.leafValues.set(leaf.id, seg.elements[parsed.elIdx] ?? "");
+      iter.leafValues.set(leaf.id, value);
     }
   }
 }
@@ -505,48 +503,91 @@ function directLeavesByTag(
 }
 
 /**
- * Parse a schema leaf's seg into { tag, qualifier?, elIdx }. Supports:
+ * Parse a schema leaf's seg into an extraction plan. Supports:
  *
- *   "B2*04"         → positional element 4
- *   "REF*BM"        → REF with qualifier "BM" at element 1, value at element 2
- *   "DTM*011"       → DTM with qualifier "011", value at element 2
- *   "N1*SF"         → N1 with qualifier "SF", value at element 2
- *   "PID*F*08"      → PID with qualifier "F" at element 1, value at element 8
- *   "MAN*GM (T)"    → MAN with qualifier "GM"; display suffix " (T)" stripped
+ *   "B2*04"         → positional at element 4
+ *   "REF*BM"        → 2-part non-digit qualifier: SCAN elements for "BM";
+ *                     value is the element immediately after the match
+ *                     (same pattern works for N1*SF, DTM*011, MAN*GM,
+ *                      LIN*UP — LIN is exactly this shape with pairs at
+ *                      positions 2/3, 4/5, 6/7)
+ *   "PID*F*08"      → qualifier "F" at position 1, value at explicit
+ *                     position 8 (for segments where value is fixed)
+ *   "MEA*PD*WT"     → multi-qualifier: "PD" at pos 1, "WT" at pos 2,
+ *                     value at the position after (pos 3)
+ *   "MAN*GM (T)"    → display suffix " (T)" stripped, treated as
+ *                     2-part qualifier "GM"
  *
- * Heuristic for the ambiguous 2-part form (TAG*STRING): treat STRING as
- * a POSITION iff it's 1–2 digits (01..99). Otherwise it's a QUALIFIER
- * and the value defaults to element 2. This correctly disambiguates
- * "B2*04" (pos) from "DTM*011" (qual) since "011" is 3 chars.
+ * Scan-mode is the key to LIN: one LIN segment on the wire carries
+ * UP+value, EN+value, IN+value as repeating pairs, and we extract
+ * them into different schema leaves without caring about their
+ * absolute element positions.
  */
 function parseX12Seg(seg: string): {
   tag: string;
-  qualifier?: string;
-  elIdx: number;
+  qualifiers: string[]; // filter qualifiers, applied in order at elements[0], elements[1], ...
+  elIdx: number | null;  // explicit value index; null means "next element after the matched qualifier(s)"
+  scanMode: boolean; // true when qualifier can appear at any position (LIN-style)
 } | null {
-  // Strip display suffixes like " (T)", " (P)" used for disambiguation
-  // in the schema tree.
   const cleaned = seg.replace(/\s*\([^)]*\)\s*$/, "").trim();
   const parts = cleaned.split("*");
   if (parts.length < 2) return null;
   const tag = parts[0];
   if (!/^[A-Z0-9]+$/.test(tag)) return null;
-
-  const isPositionalToken = (s: string) => /^\d{1,2}$/.test(s);
+  const isPos = (s: string) => /^\d{1,2}$/.test(s);
   const last = parts[parts.length - 1];
 
+  // 2-part form
   if (parts.length === 2) {
-    if (isPositionalToken(last)) {
-      return { tag, elIdx: parseInt(last, 10) - 1 };
+    if (isPos(last)) {
+      return { tag, qualifiers: [], elIdx: parseInt(last, 10) - 1, scanMode: false };
     }
-    return { tag, qualifier: parts[1], elIdx: 1 };
+    // 2-part non-digit: scan mode — qualifier can be at any element position
+    return { tag, qualifiers: [parts[1]], elIdx: null, scanMode: true };
   }
 
-  // 3+ parts — qualifier at parts[1], position at the end if numeric.
-  if (isPositionalToken(last)) {
-    return { tag, qualifier: parts[1], elIdx: parseInt(last, 10) - 1 };
+  // 3+ parts. Last is either a digit (explicit position) or another qualifier.
+  if (isPos(last)) {
+    const quals = parts.slice(1, -1);
+    return { tag, qualifiers: quals, elIdx: parseInt(last, 10) - 1, scanMode: false };
   }
-  return { tag, qualifier: parts[1], elIdx: 1 };
+  // All post-tag tokens are qualifiers; value is the position right after them.
+  const quals = parts.slice(1);
+  return { tag, qualifiers: quals, elIdx: null, scanMode: false };
+}
+
+/** Extract a value from a wire segment using a parsed schema leaf.
+ * Returns null when the filter qualifiers don't match. */
+function matchAndExtract(
+  seg: X12Segment,
+  parsed: ReturnType<typeof parseX12Seg>,
+): string | null {
+  if (!parsed) return null;
+
+  // Pure positional — no qualifier filter.
+  if (parsed.qualifiers.length === 0) {
+    return seg.elements[parsed.elIdx ?? 0] ?? "";
+  }
+
+  if (parsed.scanMode) {
+    // Scan for the single qualifier anywhere in the element list;
+    // value is the element immediately after the match. Handles LIN's
+    // repeating qualifier/value pairs (UP, value, EN, value, IN, value).
+    const target = parsed.qualifiers[0];
+    for (let i = 0; i < seg.elements.length; i++) {
+      if (seg.elements[i] === target) {
+        return seg.elements[i + 1] ?? "";
+      }
+    }
+    return null;
+  }
+
+  // Multi-qualifier at fixed positions starting at element 0.
+  for (let q = 0; q < parsed.qualifiers.length; q++) {
+    if ((seg.elements[q] ?? "") !== parsed.qualifiers[q]) return null;
+  }
+  const valueIdx = parsed.elIdx ?? parsed.qualifiers.length;
+  return seg.elements[valueIdx] ?? "";
 }
 
 function stringifyScalar(v: unknown): string | undefined {

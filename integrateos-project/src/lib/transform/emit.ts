@@ -342,19 +342,23 @@ function emitX12Walk(
   ctx: EmitCtx,
   delims: EdiDelims,
 ): void {
-  // Group consecutive leaves by (tag, qualifier). Qualified segs like
-  // "REF*BM*02" and "REF*LT*02" produce DIFFERENT wire segments (one
-  // REF*BM and one REF*LT) even though they share the tag.
+  // Group consecutive leaves so they share a segment:
+  //   - Scan-mode (LIN-style): group by TAG alone. Different
+  //     qualifiers (UP/EN/IN) all ride in ONE LIN segment as
+  //     qualifier+value pairs at positions 2/3, 4/5, 6/7, …
+  //   - Positional or fixed-position qualifier: group by
+  //     (tag, qualifier-list). "REF*BM" and "REF*LT" produce
+  //     DIFFERENT wire segments because their qualifiers differ.
   let pendingTag: string | null = null;
-  let pendingQual: string | undefined = undefined;
+  let pendingKey: string = "";
   let pendingLeaves: SchemaNode[] = [];
 
   const flush = () => {
     if (pendingTag && pendingLeaves.length > 0) {
-      emitX12Segment(pendingTag, pendingQual, pendingLeaves, out, ctx, delims);
+      emitX12Segment(pendingTag, pendingLeaves, out, ctx, delims);
     }
     pendingTag = null;
-    pendingQual = undefined;
+    pendingKey = "";
     pendingLeaves = [];
   };
 
@@ -362,12 +366,15 @@ function emitX12Walk(
     if (node.type === "el") {
       const parsed = parseX12Seg(node.seg);
       if (!parsed) continue;
-      if (pendingTag &&
-        (pendingTag !== parsed.tag || pendingQual !== parsed.qualifier)) {
+      // Scan-mode leaves share a group key of just "SCAN" so any
+      // qualifier folds into the same segment. Non-scan leaves use
+      // their qualifier list as the key.
+      const key = parsed.scanMode ? "SCAN" : parsed.qualifiers.join("|");
+      if (pendingTag && (pendingTag !== parsed.tag || pendingKey !== key)) {
         flush();
       }
       pendingTag = parsed.tag;
-      pendingQual = parsed.qualifier;
+      pendingKey = key;
       pendingLeaves.push(node);
       continue;
     }
@@ -399,28 +406,52 @@ function emitX12Walk(
 
 function emitX12Segment(
   tag: string,
-  qualifier: string | undefined,
   leaves: SchemaNode[],
   out: string[],
   ctx: EmitCtx,
   delims: EdiDelims,
 ): void {
-  const parts: string[] = [tag];
-  // When the leaves are qualified, pin element 01 to the qualifier
-  // so the wire looks like REF*BM*BOL-123 rather than REF**BOL-123.
-  if (qualifier !== undefined) {
-    parts.push(qualifier);
+  // Determine mode from the first leaf — all leaves in the group
+  // share the same key, so mode is uniform.
+  const first = parseX12Seg(leaves[0]?.seg ?? "");
+  if (!first) return;
+
+  const resolveValue = (leaf: SchemaNode): string | undefined => {
+    const rule = ctx.rulesByTargetId.get(leaf.id);
+    if (!rule) return undefined;
+    const srcValue = ctx.applyCtx.resolveSource?.(rule.sid);
+    return applyRule(rule, srcValue, ctx.applyCtx);
+  };
+
+  if (first.scanMode) {
+    // LIN-style: tag, then qualifier+value pairs. Element 1 (line
+    // number) is left blank unless a positional leaf for it is in
+    // the group — which it wouldn't be, since we keyed these
+    // separately. Emit: TAG**QUAL1*VAL1*QUAL2*VAL2*…
+    const parts: string[] = [tag, ""];
+    for (const leaf of leaves) {
+      const parsed = parseX12Seg(leaf.seg);
+      if (!parsed || parsed.qualifiers.length === 0) continue;
+      const value = resolveValue(leaf);
+      if (value === undefined) continue;
+      parts.push(parsed.qualifiers[0]);
+      parts.push(value);
+    }
+    while (parts.length > 1 && parts[parts.length - 1] === "") parts.pop();
+    if (parts.length <= 2) return; // only tag + blank line#
+    out.push(parts.join(delims.elSep));
+    return;
   }
+
+  // Non-scan mode: qualifiers (if any) pinned at element 0..N-1,
+  // values at explicit positions.
+  const parts: string[] = [tag, ...first.qualifiers];
   for (const leaf of leaves) {
     const parsed = parseX12Seg(leaf.seg);
     if (!parsed) continue;
-    const rule = ctx.rulesByTargetId.get(leaf.id);
-    let value: string | undefined;
-    if (rule) {
-      const srcValue = ctx.applyCtx.resolveSource?.(rule.sid);
-      value = applyRule(rule, srcValue, ctx.applyCtx);
-    }
-    const position = parsed.elIdx + 1;
+    const value = resolveValue(leaf);
+    const position =
+      (parsed.elIdx ?? parsed.qualifiers.length) + 1;
     while (parts.length <= position) parts.push("");
     parts[position] = value ?? "";
   }
@@ -429,11 +460,12 @@ function emitX12Segment(
   out.push(parts.join(delims.elSep));
 }
 
-/** Same parser as extract.ts — see that file for format docs. */
+/** Same parser as extract.ts — keep the logic in sync. */
 function parseX12Seg(seg: string): {
   tag: string;
-  qualifier?: string;
-  elIdx: number;
+  qualifiers: string[];
+  elIdx: number | null;
+  scanMode: boolean;
 } | null {
   const cleaned = seg.replace(/\s*\([^)]*\)\s*$/, "").trim();
   const parts = cleaned.split("*");
@@ -443,11 +475,18 @@ function parseX12Seg(seg: string): {
   const isPos = (s: string) => /^\d{1,2}$/.test(s);
   const last = parts[parts.length - 1];
   if (parts.length === 2) {
-    if (isPos(last)) return { tag, elIdx: parseInt(last, 10) - 1 };
-    return { tag, qualifier: parts[1], elIdx: 1 };
+    if (isPos(last)) {
+      return { tag, qualifiers: [], elIdx: parseInt(last, 10) - 1, scanMode: false };
+    }
+    return { tag, qualifiers: [parts[1]], elIdx: null, scanMode: true };
   }
   if (isPos(last)) {
-    return { tag, qualifier: parts[1], elIdx: parseInt(last, 10) - 1 };
+    return {
+      tag,
+      qualifiers: parts.slice(1, -1),
+      elIdx: parseInt(last, 10) - 1,
+      scanMode: false,
+    };
   }
-  return { tag, qualifier: parts[1], elIdx: 1 };
+  return { tag, qualifiers: parts.slice(1), elIdx: null, scanMode: false };
 }
