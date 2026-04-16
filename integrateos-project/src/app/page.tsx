@@ -71,7 +71,22 @@ export default async function LandingPage() {
           <NewPartnerForm />
         </section>
 
-        <p className="mt-10 text-xs text-ink-mute flex gap-4">
+        <p className="mt-10 text-xs text-ink-mute flex gap-4 flex-wrap">
+          <Link href="/health" className="underline">
+            Partner health →
+          </Link>
+          <Link href="/endpoints" className="underline">
+            Ingress endpoints →
+          </Link>
+          <Link href="/runs" className="underline">
+            Transaction stream →
+          </Link>
+          <Link href="/exceptions" className="underline">
+            Exceptions →
+          </Link>
+          <Link href="/alerts" className="underline">
+            Alerts →
+          </Link>
           <Link href="/schemas" className="underline">
             Browse schemas →
           </Link>

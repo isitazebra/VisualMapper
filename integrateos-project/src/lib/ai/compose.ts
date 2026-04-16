@@ -38,10 +38,12 @@ RULES
 RULE-VALUE SYNTAX — the transform engine understands these specific formats:
 - \`dateFormat\`: value is "FROM->TO", with tokens YYYY YY MM DD HH mm ss (e.g. "YYYYMMDD->ISO", "YYMMDD->MM/DD/YYYY"). The literal "ISO" on the right-hand side is a shortcut for ISO 8601.
 - \`formula\`: value is one of: cents_to_dollars, dollars_to_cents, to_upper, to_lower, trim, digits_only, strip_leading_zeros, first_word, last_word, title_case, country_2to3 (US→USA), country_3to2 (USA→US), lb_to_kg, kg_to_lb, in_to_cm, cm_to_in, to_each_count (e.g. "5 CA" → "60"). Use \`formula\` for any numeric or string transformation before falling back to a placeholder.
-- \`concat\`: value is either a plain literal (appended as a suffix) or a template with {id} placeholders referencing other source node ids. {_} refers to this rule's own source. Example: "{_}-{g06}" → source + "-" + GS control number.
+- \`concat\`: value is either a plain literal (appended as a suffix) or a template with {id} or {SEG} placeholders referencing other source node ids. {_} refers to this rule's own source. Example: "{_}-{g06}" → source + "-" + GS control number.
 - \`splitField\`: value is "start,end" with optional negative indexes (e.g. "0,3" or "-4" or "2,-1").
 - \`parseXml\`: value is a tag path (e.g. "Shipment/Origin/City" or "Shipment/@id" for attributes).
-- \`lookup\`: value names a lookup table. Execution is pending — prefer \`formula\` when a named transformation suffices.`;
+- \`lookup\`: value names a lookup table (user-managed key→value table). The source value is the key.
+- \`aggregate\`: value is one of: sum, count, avg, min, max, first, last. The rule's source should be a leaf inside a loop; the op runs across all iterations of that loop.
+- \`conditional\`: \`condition\` is a boolean expression like "ISA*06 = ELOGEX" or "N1*01 = BT AND N4*02 = CA". Operators: = / !=. Conjunctions: AND / OR (left-to-right). Literals can be unquoted or quoted. "_" means this rule's own source. When true, \`value\` is emitted; when false, the source value passes through unchanged.`;
 
 /** Tool schema given to Claude. Mirrors ProposedOperation / ProposedOverride. */
 function buildTool() {

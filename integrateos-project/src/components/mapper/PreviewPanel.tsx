@@ -122,6 +122,9 @@ export function PreviewPanel({
             result.ok ? (
               <span style={{ fontSize: 8, color: COLORS.t3, fontFamily: FONT_MONO }}>
                 {result.mappedCount} mapped · {result.unmappedLeafCount} skipped
+                {result.transactionCount && result.transactionCount > 1
+                  ? ` · ${result.transactionCount} tx`
+                  : ""}
               </span>
             ) : null
           }

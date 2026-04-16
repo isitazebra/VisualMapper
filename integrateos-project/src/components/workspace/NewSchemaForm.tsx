@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type { SchemaNode } from "@/lib/types";
 
-type InferFormat = "json" | "xml" | "otm_xml" | "csv" | "x12";
+type InferFormat = "json" | "xml" | "otm_xml" | "csv" | "x12" | "edifact";
 type Role = "source" | "target";
 
 const FORMAT_OPTIONS: Array<{ value: InferFormat; label: string; sample: string }> = [
@@ -32,6 +32,12 @@ const FORMAT_OPTIONS: Array<{ value: InferFormat; label: string; sample: string 
     label: "X12",
     sample:
       "ISA*00*          *00*          *ZZ*UPSSCNL        *02*CLLQ           *250318*1430*U*00401*000017090*0*P*\"~GS*SM*UPSSCNL*CLLQ*20250318*143000*1709*X*004010~ST*204*017090001~B2*02*CLNL*04*LD23029450*06*PP~L11*01*LD23029450*02*BM~SE*5*017090001~GE*1*1709~IEA*1*000017090~",
+  },
+  {
+    value: "edifact",
+    label: "EDIFACT",
+    sample:
+      "UNA:+.? '\nUNB+UNOC:3+SENDER+RECEIVER+250318:1430+000001'\nUNH+1+IFTMIN:D:96B:UN'\nBGM+220+REF-123+9'\nDTM+137:20250318:102'\nNAD+SH+SENDER+++SENDER NAME++++++US'\nLOC+11+ATL'\nUNT+5+1'\nUNZ+1+000001'",
   },
 ];
 

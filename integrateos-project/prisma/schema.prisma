@@ -50,9 +50,156 @@ model Partner {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  mappings MappingSpec[]
-  schemas  Schema[]
-  lookups  LookupTable[]
+  mappings   MappingSpec[]
+  schemas    Schema[]
+  lookups    LookupTable[]
+  endpoints  Endpoint[]
+  runs       TransactionRun[]
+  alertRules AlertRule[]
+}
+
+// ─── Runtime ────────────────────────────────────────────────────────
+// An ingress Endpoint binds an opaque token to a mapping spec. Inbound
+// requests at /api/ingress/:token get transformed via the mapping and
+// either returned synchronously (mode=sync) or forwarded to egressUrl
+// (mode=forward). Each inbound request produces exactly one
+// TransactionRun row capturing the full lifecycle.
+model Endpoint {
+  id            String      @id @default(cuid())
+  partnerId     String
+  partner       Partner     @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  mappingSpecId String
+  mappingSpec   MappingSpec @relation(fields: [mappingSpecId], references: [id], onDelete: Cascade)
+  name          String
+  // Opaque token baked into the ingress URL. Rotate to rotate the URL.
+  token         String      @unique
+  // "sync" → return the transformed output in the response body
+  // "forward" → HTTP POST to egressUrl and return 202 to caller
+  mode          String      @default("sync")
+  egressUrl     String?
+  // Extra HTTP headers sent on egress (JSONB map k→v).
+  egressHeaders Json?
+  active        Boolean     @default(true)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  runs       TransactionRun[]
+  alertRules AlertRule[]
+
+  @@index([partnerId])
+  @@index([mappingSpecId])
+}
+
+// One row per inbound request. Captures input, output, status, timing,
+// and egress result (when mode=forward).
+model TransactionRun {
+  id               String    @id @default(cuid())
+  endpointId       String
+  endpoint         Endpoint  @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  partnerId        String
+  partner          Partner   @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  mappingSpecId    String
+  mappingSpec      MappingSpec @relation(fields: [mappingSpecId], references: [id], onDelete: Cascade)
+  // "received" → just arrived
+  // "transformed" → successful transform, egress not applicable or pending
+  // "delivered" → forwarded successfully (mode=forward)
+  // "failed" → something broke (see errorStage + errorMessage)
+  status           String
+  inputPayload     String    @db.Text
+  outputPayload    String?   @db.Text
+  inputSize        Int
+  outputSize       Int?
+  mappedCount      Int?
+  unmappedCount    Int?
+  transactionCount Int?
+  errorMessage     String?
+  errorStage       String?   // "parse" | "transform" | "emit" | "egress"
+  egressStatus     Int?
+  egressBody       String?   @db.Text
+  egressError      String?
+  receivedAt       DateTime  @default(now())
+  transformedAt    DateTime?
+  deliveredAt      DateTime?
+  durationMs       Int?
+  // Exception-queue workflow: failures default to unresolved; flipping
+  // to true hides them from the queue without deleting the run.
+  resolved         Boolean   @default(false)
+  resolvedAt       DateTime?
+  resolvedNote     String?
+
+  @@index([endpointId, receivedAt(sort: Desc)])
+  @@index([partnerId, receivedAt(sort: Desc)])
+  @@index([mappingSpecId])
+  @@index([status])
+  @@index([status, resolved])
+
+  events TransactionEvent[]
+}
+
+// One row per lifecycle event within a TransactionRun. Lets us render a
+// timeline ("received → parsed → transformed → egress_sent → delivered")
+// with timing between steps, rather than only the rollup on the run row.
+model TransactionEvent {
+  id         String          @id @default(cuid())
+  runId      String
+  run        TransactionRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+  // "received" | "parsed" | "transformed" | "emitted" | "egress_sent"
+  // | "egress_response" | "failed" | "replayed"
+  stage      String
+  at         DateTime        @default(now())
+  // Elapsed ms since the run was received (not since the previous
+  // event — simpler aggregations downstream).
+  elapsedMs  Int?
+  message    String?
+  detail     Json?
+
+  @@index([runId, at])
+}
+
+// ─── Alerts (Phase 4.5) ─────────────────────────────────────────────
+// Alert rule — fires a webhook when its condition is met over the
+// configured rolling time window. Rules can be scoped to a specific
+// endpoint, a partner, or global (no scope set). Cooldown: a rule
+// won't re-fire within `windowMin` minutes of its last trigger.
+model AlertRule {
+  id              String       @id @default(cuid())
+  name            String
+  partnerId       String?
+  partner         Partner?     @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+  endpointId      String?
+  endpoint        Endpoint?    @relation(fields: [endpointId], references: [id], onDelete: SetNull)
+  // "error_rate_over" — failed/total ≥ threshold (threshold is 0..1)
+  // "failure_count"   — failed ≥ threshold
+  // "volume_drop"     — total < threshold (alerts on missing traffic)
+  condition       String
+  threshold       Float
+  windowMin       Int
+  channel         String       @default("webhook")
+  webhookUrl      String?
+  active          Boolean      @default(true)
+  lastTriggeredAt DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  events AlertEvent[]
+
+  @@index([active])
+  @@index([partnerId])
+  @@index([endpointId])
+}
+
+// Audit log of every alert that fired — kept regardless of whether
+// the webhook delivery succeeded, so you can see what happened even
+// when the receiver is down.
+model AlertEvent {
+  id          String   @id @default(cuid())
+  ruleId      String
+  rule        AlertRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  triggeredAt DateTime  @default(now())
+  summary     String
+  payload     Json
+
+  @@index([ruleId, triggeredAt(sort: Desc)])
 }
 
 // ─── Lookup table for the `lookup` rule type ───
@@ -106,6 +253,8 @@ model MappingSpec {
   loopConfigs   LoopConfig[]
   comments      Comment[]
   changeLog     ChangeLogEntry[]
+  endpoints     Endpoint[]
+  runs          TransactionRun[]
 
   @@index([partnerId])
   @@index([txType, ediVersion])

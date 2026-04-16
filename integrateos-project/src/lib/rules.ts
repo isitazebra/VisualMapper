@@ -53,6 +53,7 @@ export const RULE_TYPES: Record<RuleTypeId, RuleTypeMeta> = {
   passthrough:   { label: "Passthrough",    icon: "⇢",  color: COLORS.green },
   hlCounter:     { label: "HL Counter",     icon: "⇅",  color: COLORS.amber },
   splitField:    { label: "Split/Substr",   icon: "✂",  color: COLORS.pink },
+  aggregate:     { label: "Aggregate Loop", icon: "Σ",  color: COLORS.teal },
 };
 
 /** Rule types that don't require a value input. */

@@ -29,6 +29,9 @@ interface MappingStudioProps {
   targetDescriptor?: SchemaDescriptor;
   /** Lookup tables visible to this mapping (global + partner-scoped). */
   lookupTables?: Record<string, Record<string, string>>;
+  /** When true, suppresses autosave, compose bar, and editing controls.
+   * Used by /demo to let visitors browse without modifying anything. */
+  readOnly?: boolean;
 }
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
@@ -40,6 +43,7 @@ export function MappingStudio({
   sourceDescriptor,
   targetDescriptor,
   lookupTables,
+  readOnly,
 }: MappingStudioProps) {
   const [state, dispatch] = useReducer(
     mapperReducer,
@@ -83,7 +87,7 @@ export function MappingStudio({
   // Debounced autosave on maps / metadata changes.
   useDebouncedEffect(
     () => {
-      if (!initialSpec) return;
+      if (!initialSpec || readOnly) return;
       if (!hasMounted.current) {
         hasMounted.current = true;
         return;
@@ -98,11 +102,10 @@ export function MappingStudio({
     500,
   );
 
-  // Separate debounced save for the sample payload — bursty typing
-  // shouldn't spam the server.
+  // Separate debounced save for the sample payload.
   useDebouncedEffect(
     () => {
-      if (!initialSpec) return;
+      if (!initialSpec || readOnly) return;
       if (!sampleMounted.current) {
         sampleMounted.current = true;
         return;
@@ -147,15 +150,15 @@ export function MappingStudio({
         state={state}
         dispatch={dispatch}
         stats={stats}
-        persisted={!!initialSpec}
-        saveStatus={saveStatus}
-        saveError={saveError}
+        persisted={!!initialSpec && !readOnly}
+        saveStatus={readOnly ? undefined : saveStatus}
+        saveError={readOnly ? undefined : saveError}
         specName={initialSpec?.name}
         partnerId={initialSpec?.partnerId}
         mappingId={initialSpec?.id}
       />
 
-      {initialSpec && (
+      {initialSpec && !readOnly && (
         <ComposeBar
           mappingId={initialSpec.id}
           dispatch={dispatch}

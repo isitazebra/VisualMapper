@@ -3,12 +3,13 @@
  * aware values, resolves the effective rule per target leaf, and emits
  * the target payload.
  *
- * "Effective rule" = the active customer's override for that target if
- * one exists; otherwise the base rule.
+ * When the source is X12 and contains multiple ST/SE blocks inside a
+ * functional group, runTransform fans out: runs the transform once per
+ * transaction and concatenates the outputs separated by a banner.
  */
 import type { SchemaDescriptor } from "../schemas/registry";
 import type { FieldMap } from "../types";
-import { parseSource } from "./parse";
+import { parseSource, type ParsedSource } from "./parse";
 import { extractSourceValues } from "./extract";
 import { emitTarget } from "./emit";
 import { effectiveRule } from "./apply";
@@ -18,20 +19,24 @@ export interface TransformRequest {
   target: SchemaDescriptor;
   maps: FieldMap[];
   sample: string;
-  /** "(Base)" for plain base-rule preview, or a customer name to see
-   * that customer's effective override set. */
   activeCustomer: string;
-  /** Optional lookup tables by name. When absent, `lookup` rules emit
-   * a "⟨lookup:NAME?⟩" placeholder so the user can see what's missing. */
   lookupTables?: Map<string, Record<string, string>>;
 }
 
 export type TransformResult =
-  | { ok: true; output: string; mappedCount: number; unmappedLeafCount: number }
+  | {
+      ok: true;
+      output: string;
+      mappedCount: number;
+      unmappedLeafCount: number;
+      /** Number of distinct transactions processed (> 1 for
+       * multi-document X12 functional groups). */
+      transactionCount?: number;
+    }
   | { ok: false; error: string };
 
 export function runTransform(req: TransformRequest): TransformResult {
-  let parsed;
+  let parsed: ParsedSource;
   try {
     parsed = parseSource(req.source.format, req.sample);
   } catch (err) {
@@ -41,10 +46,7 @@ export function runTransform(req: TransformRequest): TransformResult {
     };
   }
 
-  const extract = extractSourceValues(req.source, parsed);
-
-  // Resolve the effective rule for every target leaf once up front so
-  // the emitter doesn't redo this lookup per-iteration.
+  // Precompute effective rules once per call.
   const rulesByTargetId = new Map<string, FieldMap>();
   let mapped = 0;
   let unmapped = 0;
@@ -59,6 +61,33 @@ export function runTransform(req: TransformRequest): TransformResult {
     }
   }
 
+  // Multi-transaction fan-out for X12 functional groups.
+  if (parsed.format === "x12" && parsed.transactions && parsed.transactions.length > 1) {
+    const parts: string[] = [];
+    parsed.transactions.forEach((txSegs, i) => {
+      const txParsed: ParsedSource = { format: "x12", value: txSegs };
+      const extract = extractSourceValues(req.source, txParsed);
+      const output = emitTarget({
+        targetDescriptor: req.target,
+        sourceDescriptor: req.source,
+        extract,
+        rulesByTargetId,
+        lookupTables: req.lookupTables,
+      });
+      parts.push(
+        `── transaction ${i + 1} of ${parsed.transactions!.length} ──\n${output}`,
+      );
+    });
+    return {
+      ok: true,
+      output: parts.join("\n\n"),
+      mappedCount: mapped,
+      unmappedLeafCount: unmapped,
+      transactionCount: parsed.transactions.length,
+    };
+  }
+
+  const extract = extractSourceValues(req.source, parsed);
   let output: string;
   try {
     output = emitTarget({

@@ -1,18 +1,14 @@
 /**
- * Target-payload emitters — loop-aware. Given the target schema, the
- * extracted source values (per loop iteration), the effective rule for
- * each target leaf, and a source-leaf → loop-ancestor map, produces a
- * formatted string with one iteration in the target per iteration in
- * the "driver" source loop.
- *
- * Driver-loop detection: for each target loop we look at its descendant
- * leaves' rules, find each rule's source-loop ancestor, and pick the
- * most common one. If no descendants reference a looped source, the
- * target loop emits a single iteration (legacy behavior).
+ * Target-payload emitters — stack-aware. Walks the target schema with
+ * an active loop stack; resolves source values by looking in the
+ * innermost iteration that contains them, then falling back outward
+ * to the root. For each target loop, its "driver" source loop is
+ * picked by majority vote of its descendants' rules; iterations come
+ * from the current stack's innermost subLoops (or from rootLoops).
  */
 import type { SchemaDescriptor } from "../schemas/registry";
 import type { FieldMap, SchemaNode } from "../types";
-import type { ExtractResult } from "./extract";
+import type { ExtractResult, IterationNode } from "./extract";
 import {
   buildLoopAncestry,
   descendantLeaves,
@@ -24,9 +20,7 @@ export interface EmitParams {
   targetDescriptor: SchemaDescriptor;
   sourceDescriptor: SchemaDescriptor;
   extract: ExtractResult;
-  /** Effective rule per target leaf id (customer-aware). */
   rulesByTargetId: Map<string, FieldMap>;
-  /** Passed down into applyCtx so `lookup` rules can resolve. */
   lookupTables?: Map<string, Record<string, string>>;
 }
 
@@ -40,60 +34,102 @@ export function emitTarget(params: EmitParams): string {
       return emitXml(ctx);
     case "csv":
       return emitCsv(ctx);
+    case "x12":
+      return emitX12(ctx, { elSep: "*", segSep: "~" });
+    case "edifact":
+      return emitX12(ctx, { elSep: "+", segSep: "'" });
     default:
       return emitJson(ctx);
   }
 }
 
+interface EdiDelims {
+  elSep: string;
+  segSep: string;
+}
+
+type LoopStack = Array<{ loopId: string; iterNode: IterationNode; iterIdx: number }>;
+
 interface EmitCtx {
   targetDescriptor: SchemaDescriptor;
   targetById: Map<string, SchemaNode>;
-  sourceLeafToLoop: Map<string, string | null>;
   driverByTargetLoop: Map<string, string | null>;
   extract: ExtractResult;
   rulesByTargetId: Map<string, FieldMap>;
   applyCtx: ApplyContext;
-  /** Mutated in-place by the emit walkers so applyCtx.resolveSource
-   * (which closes over this) sees the current iteration state. */
-  iterCtxRef: { current: Map<string, number> };
+  /** Mutated in place as we descend; applyCtx.resolveSource closes over it. */
+  stack: LoopStack;
 }
 
 function buildEmitCtx(params: EmitParams): EmitCtx {
   const targetById = new Map(params.targetDescriptor.nodes.map((n) => [n.id, n]));
-  const sourceLeafToLoop = params.extract.leafToLoop;
   const driverByTargetLoop = buildDriverMap(
     params.targetDescriptor.nodes,
     params.rulesByTargetId,
-    sourceLeafToLoop,
+    params.extract.leafToLoop,
   );
-  // resolveSource is filled in per-iteration below so concat-template
-  // rules see the correct value for the current loop scope. The ctx
-  // here holds a reference; we mutate its closure-captured iterCtx as
-  // the emitter walks.
-  const iterCtxRef = { current: new Map<string, number>() };
+  const sourceIdBySeg = new Map<string, string>();
+  for (const n of params.sourceDescriptor.nodes) {
+    if (!sourceIdBySeg.has(n.seg)) sourceIdBySeg.set(n.seg, n.id);
+  }
+  const stack: LoopStack = [];
+
+  /** Walk the stack innermost-first; fall back to rootLeaves. */
+  const resolveById = (sourceId: string): string | undefined => {
+    for (let i = stack.length - 1; i >= 0; i--) {
+      const v = stack[i].iterNode.leafValues.get(sourceId);
+      if (v !== undefined) return v;
+    }
+    return params.extract.rootLeaves.get(sourceId);
+  };
+
   const applyCtx: ApplyContext = {
     counters: new Map(),
     lookupTables: params.lookupTables,
-    resolveSource: (sourceId: string) => {
-      const arr = params.extract.values.get(sourceId);
-      if (!arr) return undefined;
-      const loop = sourceLeafToLoop.get(sourceId);
-      if (loop && iterCtxRef.current.has(loop)) {
-        return arr[iterCtxRef.current.get(loop)!];
-      }
-      return arr[0];
+    resolveSource: (nameOrSeg: string) => {
+      const byId = resolveById(nameOrSeg);
+      if (byId !== undefined) return byId;
+      const mapped = sourceIdBySeg.get(nameOrSeg);
+      if (mapped) return resolveById(mapped);
+      return undefined;
     },
+    allValuesForSource: (sourceId) => collectAllValues(sourceId, params.extract),
   };
+
   return {
     targetDescriptor: params.targetDescriptor,
     targetById,
-    sourceLeafToLoop,
     driverByTargetLoop,
     extract: params.extract,
     rulesByTargetId: params.rulesByTargetId,
     applyCtx,
-    iterCtxRef,
+    stack,
   };
+}
+
+/**
+ * Walks the whole extracted tree collecting every value for `sourceId`
+ * — used by the `aggregate` rule type to sum/count across iterations
+ * regardless of nesting level.
+ */
+function collectAllValues(
+  sourceId: string,
+  extract: ExtractResult,
+): (string | undefined)[] {
+  const out: (string | undefined)[] = [];
+  const rootV = extract.rootLeaves.get(sourceId);
+  if (rootV !== undefined) out.push(rootV);
+  const walk = (node: IterationNode) => {
+    const v = node.leafValues.get(sourceId);
+    if (v !== undefined) out.push(v);
+    for (const iters of node.subLoops.values()) {
+      for (const iter of iters) walk(iter);
+    }
+  };
+  for (const iters of extract.rootLoops.values()) {
+    for (const iter of iters) walk(iter);
+  }
+  return out;
 }
 
 function buildDriverMap(
@@ -101,9 +137,7 @@ function buildDriverMap(
   rulesByTargetId: Map<string, FieldMap>,
   sourceLeafToLoop: Map<string, string | null>,
 ): Map<string, string | null> {
-  const targetLoopAncestry = buildLoopAncestry(targetNodes);
   const driver = new Map<string, string | null>();
-
   for (const node of targetNodes) {
     if (node.type !== "loop") continue;
     const leaves = descendantLeaves(node, targetNodes);
@@ -120,79 +154,71 @@ function buildDriverMap(
     }
     driver.set(node.id, best ? best[0] : null);
   }
-
-  void targetLoopAncestry;
+  void buildLoopAncestry; // retained for future use
   return driver;
 }
 
-/** Resolve a source value for a specific target leaf rule, honoring
- * the current iteration context. */
-function resolveSource(
-  rule: FieldMap,
-  iterCtx: Map<string, number>,
+/** Iterations of the driver loop in the current scope. Looks inward
+ * first (if the driver is a sub-loop of something on the stack), then
+ * at the root. */
+function findIterations(
+  driverLoopId: string | null,
   ctx: EmitCtx,
-): string | undefined {
-  const arr = ctx.extract.values.get(rule.sid);
-  if (!arr) return undefined;
-  const sourceLoop = ctx.sourceLeafToLoop.get(rule.sid);
-  if (sourceLoop && iterCtx.has(sourceLoop)) {
-    return arr[iterCtx.get(sourceLoop)!] ?? undefined;
+): IterationNode[] {
+  if (!driverLoopId) return [emptyIter()];
+  for (let i = ctx.stack.length - 1; i >= 0; i--) {
+    const iters = ctx.stack[i].iterNode.subLoops.get(driverLoopId);
+    if (iters) return iters;
   }
-  return arr[0];
+  return ctx.extract.rootLoops.get(driverLoopId) ?? [emptyIter()];
+}
+
+function emptyIter(): IterationNode {
+  return { leafValues: new Map(), subLoops: new Map() };
 }
 
 // ─── JSON ────────────────────────────────────────────────────────────
 function emitJson(ctx: EmitCtx): string {
   const tops = topLevelNodes(ctx.targetDescriptor.nodes);
   const obj: Record<string, unknown> = {};
-  const iterCtx = ctx.iterCtxRef.current;
   for (const n of tops) {
-    const v = buildJson(n, iterCtx, ctx);
+    const v = buildJson(n, ctx);
     if (v !== undefined) obj[jsonKey(n)] = v;
   }
   return JSON.stringify(obj, null, 2);
 }
 
-function buildJson(
-  node: SchemaNode,
-  iterCtx: Map<string, number>,
-  ctx: EmitCtx,
-): unknown {
+function buildJson(node: SchemaNode, ctx: EmitCtx): unknown {
   if (node.type === "el") {
     const rule = ctx.rulesByTargetId.get(node.id);
     if (!rule) return undefined;
-    const srcValue = resolveSource(rule, iterCtx, ctx);
-    const result = applyRule(rule, srcValue, ctx.applyCtx);
-    return result;
+    const srcValue = ctx.applyCtx.resolveSource?.(rule.sid);
+    return applyRule(rule, srcValue, ctx.applyCtx);
   }
-
   if (node.type === "loop") {
     const driverLoop = ctx.driverByTargetLoop.get(node.id) ?? null;
-    const n = driverLoop
-      ? Math.max(1, ctx.extract.loopIterationCount.get(driverLoop) ?? 1)
-      : 1;
+    const iters = findIterations(driverLoop, ctx);
     const items: Record<string, unknown>[] = [];
-    for (let i = 0; i < n; i++) {
-      if (driverLoop) iterCtx.set(driverLoop, i);
+    for (let i = 0; i < iters.length; i++) {
+      if (driverLoop) ctx.stack.push({ loopId: driverLoop, iterNode: iters[i], iterIdx: i });
       const item: Record<string, unknown> = {};
       for (const kidId of node.kids ?? []) {
         const kid = ctx.targetById.get(kidId);
         if (!kid) continue;
-        const v = buildJson(kid, iterCtx, ctx);
+        const v = buildJson(kid, ctx);
         if (v !== undefined) item[jsonKey(kid)] = v;
       }
+      if (driverLoop) ctx.stack.pop();
       if (Object.keys(item).length > 0) items.push(item);
-      if (driverLoop) iterCtx.delete(driverLoop);
     }
     return items.length > 0 ? items : undefined;
   }
-
   // group
   const obj: Record<string, unknown> = {};
   for (const kidId of node.kids ?? []) {
     const kid = ctx.targetById.get(kidId);
     if (!kid) continue;
-    const v = buildJson(kid, iterCtx, ctx);
+    const v = buildJson(kid, ctx);
     if (v !== undefined) obj[jsonKey(kid)] = v;
   }
   return Object.keys(obj).length > 0 ? obj : undefined;
@@ -208,15 +234,13 @@ function emitXml(ctx: EmitCtx): string {
   const tops = topLevelNodes(ctx.targetDescriptor.nodes);
   const rootName = ctx.targetDescriptor.txType ? ctx.targetDescriptor.txType : "Root";
   const lines: string[] = [`<${rootName}>`];
-  const iterCtx = ctx.iterCtxRef.current;
-  for (const n of tops) buildXml(n, iterCtx, ctx, lines, 1);
+  for (const n of tops) buildXml(n, ctx, lines, 1);
   lines.push(`</${rootName}>`);
   return lines.join("\n");
 }
 
 function buildXml(
   node: SchemaNode,
-  iterCtx: Map<string, number>,
   ctx: EmitCtx,
   lines: string[],
   depth: number,
@@ -227,7 +251,7 @@ function buildXml(
   if (node.type === "el") {
     const rule = ctx.rulesByTargetId.get(node.id);
     if (!rule) return;
-    const srcValue = resolveSource(rule, iterCtx, ctx);
+    const srcValue = ctx.applyCtx.resolveSource?.(rule.sid);
     const result = applyRule(rule, srcValue, ctx.applyCtx);
     if (result === undefined) return;
     lines.push(`${indent}<${tag}>${escapeXml(result)}</${tag}>`);
@@ -236,31 +260,28 @@ function buildXml(
 
   if (node.type === "loop") {
     const driverLoop = ctx.driverByTargetLoop.get(node.id) ?? null;
-    const n = driverLoop
-      ? Math.max(1, ctx.extract.loopIterationCount.get(driverLoop) ?? 1)
-      : 1;
-    for (let i = 0; i < n; i++) {
-      if (driverLoop) iterCtx.set(driverLoop, i);
+    const iters = findIterations(driverLoop, ctx);
+    for (let i = 0; i < iters.length; i++) {
+      if (driverLoop) ctx.stack.push({ loopId: driverLoop, iterNode: iters[i], iterIdx: i });
       const childLines: string[] = [];
       for (const kidId of node.kids ?? []) {
         const kid = ctx.targetById.get(kidId);
-        if (kid) buildXml(kid, iterCtx, ctx, childLines, depth + 1);
+        if (kid) buildXml(kid, ctx, childLines, depth + 1);
       }
+      if (driverLoop) ctx.stack.pop();
       if (childLines.length > 0) {
         lines.push(`${indent}<${tag}>`);
         lines.push(...childLines);
         lines.push(`${indent}</${tag}>`);
       }
-      if (driverLoop) iterCtx.delete(driverLoop);
     }
     return;
   }
 
-  // group
   const childLines: string[] = [];
   for (const kidId of node.kids ?? []) {
     const kid = ctx.targetById.get(kidId);
-    if (kid) buildXml(kid, iterCtx, ctx, childLines, depth + 1);
+    if (kid) buildXml(kid, ctx, childLines, depth + 1);
   }
   if (childLines.length === 0) return;
   lines.push(`${indent}<${tag}>`);
@@ -282,11 +303,10 @@ function escapeXml(v: string): string {
 function emitCsv(ctx: EmitCtx): string {
   const leaves = ctx.targetDescriptor.nodes.filter((n) => n.type === "el");
   const headers = leaves.map((n) => n.label);
-  const iterCtx = ctx.iterCtxRef.current;
   const row = leaves.map((n) => {
     const rule = ctx.rulesByTargetId.get(n.id);
     if (!rule) return "";
-    const srcValue = resolveSource(rule, iterCtx, ctx);
+    const srcValue = ctx.applyCtx.resolveSource?.(rule.sid);
     const result = applyRule(rule, srcValue, ctx.applyCtx);
     return csvCell(result ?? "");
   });
@@ -296,4 +316,177 @@ function emitCsv(ctx: EmitCtx): string {
 function csvCell(v: string): string {
   if (/[",\n\r]/.test(v)) return `"${v.replace(/"/g, '""')}"`;
   return v;
+}
+
+// ─── X12 ─────────────────────────────────────────────────────────────
+/**
+ * Generate X12 from a target schema whose leaves carry EDI segs
+ * (`ISA*01`, `B2*04`, etc.). Walk the tree in schema order, gathering
+ * leaves into segments when consecutive leaves share the same tag, and
+ * expanding loops by iterating the driver source loop.
+ *
+ * Segments are joined with `~\n`. Trailing empty elements are trimmed
+ * so output looks like `B2*02*CLNL*04*LD23029450` rather than
+ * `B2**CLNL**LD23029450**`.
+ */
+function emitX12(ctx: EmitCtx, delims: EdiDelims): string {
+  const out: string[] = [];
+  const tops = topLevelNodes(ctx.targetDescriptor.nodes);
+  emitX12Walk(tops, out, ctx, delims);
+  return out.join(delims.segSep + "\n") + (out.length > 0 ? delims.segSep : "");
+}
+
+function emitX12Walk(
+  nodes: SchemaNode[],
+  out: string[],
+  ctx: EmitCtx,
+  delims: EdiDelims,
+): void {
+  // Group consecutive leaves so they share a segment:
+  //   - Scan-mode (LIN-style): group by TAG alone. Different
+  //     qualifiers (UP/EN/IN) all ride in ONE LIN segment as
+  //     qualifier+value pairs at positions 2/3, 4/5, 6/7, …
+  //   - Positional or fixed-position qualifier: group by
+  //     (tag, qualifier-list). "REF*BM" and "REF*LT" produce
+  //     DIFFERENT wire segments because their qualifiers differ.
+  let pendingTag: string | null = null;
+  let pendingKey: string = "";
+  let pendingLeaves: SchemaNode[] = [];
+
+  const flush = () => {
+    if (pendingTag && pendingLeaves.length > 0) {
+      emitX12Segment(pendingTag, pendingLeaves, out, ctx, delims);
+    }
+    pendingTag = null;
+    pendingKey = "";
+    pendingLeaves = [];
+  };
+
+  for (const node of nodes) {
+    if (node.type === "el") {
+      const parsed = parseX12Seg(node.seg);
+      if (!parsed) continue;
+      // Scan-mode leaves share a group key of just "SCAN" so any
+      // qualifier folds into the same segment. Non-scan leaves use
+      // their qualifier list as the key.
+      const key = parsed.scanMode ? "SCAN" : parsed.qualifiers.join("|");
+      if (pendingTag && (pendingTag !== parsed.tag || pendingKey !== key)) {
+        flush();
+      }
+      pendingTag = parsed.tag;
+      pendingKey = key;
+      pendingLeaves.push(node);
+      continue;
+    }
+    if (node.type === "group") {
+      flush();
+      const kids = (node.kids ?? [])
+        .map((id) => ctx.targetById.get(id))
+        .filter((n): n is SchemaNode => !!n);
+      emitX12Walk(kids, out, ctx, delims);
+      flush();
+      continue;
+    }
+    if (node.type === "loop") {
+      flush();
+      const driverLoop = ctx.driverByTargetLoop.get(node.id) ?? null;
+      const iters = findIterations(driverLoop, ctx);
+      const kids = (node.kids ?? [])
+        .map((id) => ctx.targetById.get(id))
+        .filter((n): n is SchemaNode => !!n);
+      for (let i = 0; i < iters.length; i++) {
+        if (driverLoop) ctx.stack.push({ loopId: driverLoop, iterNode: iters[i], iterIdx: i });
+        emitX12Walk(kids, out, ctx, delims);
+        if (driverLoop) ctx.stack.pop();
+      }
+    }
+  }
+  flush();
+}
+
+function emitX12Segment(
+  tag: string,
+  leaves: SchemaNode[],
+  out: string[],
+  ctx: EmitCtx,
+  delims: EdiDelims,
+): void {
+  // Determine mode from the first leaf — all leaves in the group
+  // share the same key, so mode is uniform.
+  const first = parseX12Seg(leaves[0]?.seg ?? "");
+  if (!first) return;
+
+  const resolveValue = (leaf: SchemaNode): string | undefined => {
+    const rule = ctx.rulesByTargetId.get(leaf.id);
+    if (!rule) return undefined;
+    const srcValue = ctx.applyCtx.resolveSource?.(rule.sid);
+    return applyRule(rule, srcValue, ctx.applyCtx);
+  };
+
+  if (first.scanMode) {
+    // LIN-style: tag, then qualifier+value pairs. Element 1 (line
+    // number) is left blank unless a positional leaf for it is in
+    // the group — which it wouldn't be, since we keyed these
+    // separately. Emit: TAG**QUAL1*VAL1*QUAL2*VAL2*…
+    const parts: string[] = [tag, ""];
+    for (const leaf of leaves) {
+      const parsed = parseX12Seg(leaf.seg);
+      if (!parsed || parsed.qualifiers.length === 0) continue;
+      const value = resolveValue(leaf);
+      if (value === undefined) continue;
+      parts.push(parsed.qualifiers[0]);
+      parts.push(value);
+    }
+    while (parts.length > 1 && parts[parts.length - 1] === "") parts.pop();
+    if (parts.length <= 2) return; // only tag + blank line#
+    out.push(parts.join(delims.elSep));
+    return;
+  }
+
+  // Non-scan mode: qualifiers (if any) pinned at element 0..N-1,
+  // values at explicit positions.
+  const parts: string[] = [tag, ...first.qualifiers];
+  for (const leaf of leaves) {
+    const parsed = parseX12Seg(leaf.seg);
+    if (!parsed) continue;
+    const value = resolveValue(leaf);
+    const position =
+      (parsed.elIdx ?? parsed.qualifiers.length) + 1;
+    while (parts.length <= position) parts.push("");
+    parts[position] = value ?? "";
+  }
+  while (parts.length > 1 && parts[parts.length - 1] === "") parts.pop();
+  if (parts.length <= 1) return;
+  out.push(parts.join(delims.elSep));
+}
+
+/** Same parser as extract.ts — keep the logic in sync. */
+function parseX12Seg(seg: string): {
+  tag: string;
+  qualifiers: string[];
+  elIdx: number | null;
+  scanMode: boolean;
+} | null {
+  const cleaned = seg.replace(/\s*\([^)]*\)\s*$/, "").trim();
+  const parts = cleaned.split("*");
+  if (parts.length < 2) return null;
+  const tag = parts[0];
+  if (!/^[A-Z0-9]+$/.test(tag)) return null;
+  const isPos = (s: string) => /^\d{1,2}$/.test(s);
+  const last = parts[parts.length - 1];
+  if (parts.length === 2) {
+    if (isPos(last)) {
+      return { tag, qualifiers: [], elIdx: parseInt(last, 10) - 1, scanMode: false };
+    }
+    return { tag, qualifiers: [parts[1]], elIdx: null, scanMode: true };
+  }
+  if (isPos(last)) {
+    return {
+      tag,
+      qualifiers: parts.slice(1, -1),
+      elIdx: parseInt(last, 10) - 1,
+      scanMode: false,
+    };
+  }
+  return { tag, qualifiers: parts.slice(1), elIdx: null, scanMode: false };
 }
