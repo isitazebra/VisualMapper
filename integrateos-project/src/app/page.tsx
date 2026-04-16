@@ -93,6 +93,12 @@ export default async function LandingPage() {
           <Link href="/lookups" className="underline">
             Lookup tables →
           </Link>
+          <Link href="/docs" className="underline">
+            Docs →
+          </Link>
+          <Link href="/demo" className="underline">
+            Demo →
+          </Link>
           <Link href="/mapper" className="underline">
             Open mapper without persistence →
           </Link>
