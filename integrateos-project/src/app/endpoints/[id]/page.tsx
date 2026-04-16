@@ -19,7 +19,7 @@ export default async function EndpointDetailPage({
     where: { id: params.id },
     include: {
       partner: { select: { id: true, name: true } },
-      mappingSpec: { select: { id: true, name: true, txType: true, targetFormat: true } },
+      mappingSpec: { select: { id: true, name: true, txType: true, targetFormat: true, samplePayload: true } },
     },
   });
   if (!endpoint) notFound();
